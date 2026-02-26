@@ -1,11 +1,22 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+
+# Environment
 .env
+
+# Data / storage
 data/chroma/
 data/uploads/
 data/conversations.db
-*.egg-info/
-.DS_Store
 raw_user_files/
+
+# Widget
+widget/node_modules/
+widget/dist/
+
+# OS
+.DS_Store
