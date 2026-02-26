@@ -64,6 +64,8 @@ async def _token_stream(
     session_id: str,
     owner_id: str,
     client_ip: str,
+    visitor_email: str | None = None,
+    visitor_name: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that runs the RAG pipeline and yields SSE-formatted frames.
@@ -90,7 +92,8 @@ async def _token_stream(
 
         # 2. Check rate limit / identity gate
         rate_limiter = request.app.state.rate_limiter
-        email = None  # TODO: populated from JWT when OTP is ON
+        # visitor_email is set by the widget after identity gate completes
+        email = visitor_email
         rl_result = await rate_limiter.check(session_id, ip=client_ip, email=email)
 
         if not rl_result.allowed:
@@ -112,7 +115,7 @@ async def _token_stream(
         # 4. Save the completed turn + increment rate limit counter
         full_answer = "".join(full_answer_parts)
         await session_store.append_turn(session_id, question=question, answer=full_answer)
-        await rate_limiter.increment(session_id, ip=client_ip, email=email)
+        await rate_limiter.increment(session_id, ip=client_ip, email=visitor_email)
 
         logger.info(
             "Chat stream complete — session=%s  answer_length=%d",
@@ -135,17 +138,18 @@ async def _token_stream(
 
 def _validate_api_key(api_key: str | None) -> None:
     """
-    Validate the X-API-Key header against the configured owner API key.
+    Validate the API key.
 
-    For now we just check it's not missing. Full per-owner key validation
-    will be added with the auth middleware.
+    The key can arrive as:
+      - X-API-Key request header  (used by curl / fetch)
+      - ?api_key= query parameter (used by EventSource, which can't set headers)
 
-    Raises HTTPException 401 if the key is missing or invalid.
+    Raises HTTPException 401 if the key is missing.
     """
     if not api_key:
         raise HTTPException(
             status_code=401,
-            detail="Missing X-API-Key header.",
+            detail="Missing API key. Provide X-API-Key header or ?api_key= query param.",
         )
     # TODO: validate against per-owner key store once auth is implemented
 
@@ -162,12 +166,24 @@ async def chat_stream(
         default=None,
         description="Session ID for conversation continuity. Auto-generated if not provided.",
     ),
+    api_key: str | None = Query(
+        default=None,
+        description="API key (query param fallback for EventSource, which cannot send headers).",
+    ),
+    visitor_email: str | None = Query(
+        default=None,
+        description="Visitor email — set by widget after identity gate is completed.",
+    ),
+    visitor_name: str | None = Query(
+        default=None,
+        description="Visitor name — set by widget after identity gate is completed.",
+    ),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     """
     Stream a RAG-powered answer to the visitor's question.
 
-    - Validates the API key
+    - Validates the API key (header or query param — EventSource uses query param)
     - Checks rate limit (IP-based when OTP off, email-based when OTP on)
     - Fires identity gate SSE event when OTP threshold is reached
     - Runs the full RAG pipeline and streams tokens
@@ -178,14 +194,14 @@ async def chat_stream(
                         event: identity_gate\\ndata: {...}\\n\\n
     Final frame:        data: [DONE]\\n\\n
     """
-    # Validate API key
-    _validate_api_key(x_api_key)
+    # Accept key from header OR query param (EventSource can't set headers)
+    effective_key = x_api_key or api_key
+    _validate_api_key(effective_key)
 
     # Get client IP for rate limiting
     client_ip = request.client.host if request.client else "unknown"
 
     # Generate session ID if not provided
-    # The widget sends one; curl/direct API calls may omit it
     if not session_id:
         session_id = str(uuid.uuid4())
         logger.info("No session_id provided — generated: %s", session_id)
@@ -194,13 +210,19 @@ async def chat_stream(
     owner_id = settings.owner_name
 
     return StreamingResponse(
-        _token_stream(request=request, question=q, session_id=session_id, owner_id=owner_id, client_ip=client_ip),
+        _token_stream(
+            request=request,
+            question=q,
+            session_id=session_id,
+            owner_id=owner_id,
+            client_ip=client_ip,
+            visitor_email=visitor_email,
+            visitor_name=visitor_name,
+        ),
         media_type="text/event-stream",
         headers={
-            # Prevent proxies and browsers from buffering the stream
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            # Return the session ID so the client can use it for follow-ups
             "X-Session-Id": session_id,
         },
     )

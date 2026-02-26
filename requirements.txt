@@ -5,6 +5,7 @@ python-multipart==0.0.17
 
 # Pydantic settings
 pydantic-settings==2.6.1
+pydantic[email]==2.10.6
 
 # LangChain RAG orchestration
 langchain==0.3.7

@@ -282,21 +282,19 @@ class RateLimiter:
                     f"You've reached today's question limit! "
                     f"Come back tomorrow to continue chatting."
                 ),
-                "show_email_capture": False,
-                "cal_com_url": cal_url or None,
-                "owner_email": settings.owner_contact_email,
+                "cal_url": cal_url or None,
+                "contact_email": settings.owner_contact_email,
                 "owner_name": owner,
             }
         else:
-            # Anonymous visitor — capture email + show Cal.com
+            # Anonymous visitor — show Cal.com + email CTA
             payload = {
                 "message": (
-                    f"You've reached today's question limit!"
+                    f"You've reached today's question limit! "
+                    f"Come back tomorrow, or get in touch with {owner} directly."
                 ),
-                "show_email_capture": True,
-                "email_capture_label": f"Want {owner} to reach out? Share your email:",
-                "email_submit_url": "/api/v1/visitor/lead",
-                "cal_com_url": cal_url or None,
+                "cal_url": cal_url or None,
+                "contact_email": settings.owner_contact_email,
                 "owner_name": owner,
             }
 

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Widget Test Page</title>
+        <style>
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                max-width: 800px;
+                margin: 60px auto;
+                padding: 0 24px;
+                color: #111;
+                background: #f8fafc;
+            }
+            h1 {
+                color: #2563eb;
+            }
+            p {
+                color: #6b7280;
+                line-height: 1.6;
+            }
+            code {
+                background: #e5e7eb;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 13px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Portfolio — Widget Test</h1>
+        <p>
+            This page simulates a portfolio website with the career assistant
+            widget embedded.
+        </p>
+        <p>
+            The chat bubble should appear in the
+            <strong>bottom-right corner</strong>. Click it to open the panel.
+        </p>
+        <p>
+            The widget is loaded from <code>dist/widget.iife.js</code> and talks
+            to the FastAPI backend at <code>http://localhost:8000</code>.
+        </p>
+        <p>
+            Make sure the backend is running:
+            <code>uvicorn backend.main:app --reload</code>
+        </p>
+
+        <!--
+    Widget embed — one script tag.
+    data-api-key: any non-empty string works while auth is a stub
+    data-base-url: points to the local FastAPI server
+    data-suggested-qs: comma-separated starter questions
+  -->
+        <script
+            src="./dist/widget.iife.js"
+            data-api-key="dev-key"
+            data-base-url="http://localhost:8000"
+            data-owner-name="Amrut"
+            data-theme-primary="#2563eb"
+            data-greeting="Hi! I'm Amrut's career assistant. Ask me anything about his experience, skills, or projects."
+            data-suggested-qs="What is Amrut's tech stack?,Tell me about his recent projects,What's his education background?"
+        ></script>
+    </body>
+</html>
