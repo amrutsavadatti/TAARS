@@ -865,38 +865,41 @@ career-ai-assistant/
 
 ## Build Order
 
-### Phase 1 — Core RAG + Auth (Week 1-2)
-1. Project scaffolding, Docker Compose (FastAPI + Valkey + ChromaDB)
-2. OTP service: generate, store in Valkey, send email, verify, issue JWT
-3. Ingestion pipeline: parse → chunk → embed (LangChain + OpenAI) → ChromaDB
-4. RAG engine: embed query → retrieve → rerank (cross-encoder) → build prompt
-5. Chat endpoint with SSE streaming
-6. Email-based rate limiting with "come back tomorrow" flow
-7. Conversation logging (SQLite)
-8. Session context via Valkey
+### Phase 1 — Core RAG + Backend ✅ COMPLETE
+1. ✅ Project scaffolding, Docker Compose (FastAPI + Valkey + ChromaDB)
+2. ⏭️ OTP service (skipped — ENABLE_OTP_GATE=false by default, add later if needed)
+3. ✅ Ingestion pipeline: PDF/image/text/DOCX parse → resume-aware chunk → OpenAI embed → ChromaDB
+4. ✅ RAG engine: embed query → vector retrieve → optional rerank → prompt builder → LLM stream
+5. ✅ Chat endpoint with SSE streaming (GET /api/v1/chat/stream)
+6. ✅ Rate limiting: IP-based (OTP off) / email-based (OTP on), named SSE events for widget UI
+7. ✅ Conversation logging: SQLite via SQLAlchemy async (visitors, conversations, messages, agent_actions)
+8. ✅ Session context via Valkey (sliding TTL, context window)
+9. ✅ Ingest endpoint (POST /api/v1/ingest) + Document management (GET/DELETE /api/v1/documents)
+10. ✅ Visitor lead capture (POST /api/v1/visitor/lead) — stores email in SQLite + Valkey
+11. ✅ System prompt tuning: synonym handling, plain prose output, visa detail suppression
 
-### Phase 2 — Widget + Analytics (Week 3)
-9. React widget with Shadow DOM
-10. OTP gate screen
-11. SSE streaming integration
-12. Suggested questions, greeting, rate limit screen
-13. Script tag embed flow
-14. Umami setup + event tracking
+### Phase 2 — Widget ✅ COMPLETE
+12. ✅ React widget with Shadow DOM (single IIFE bundle via Vite)
+13. ✅ SSE streaming integration (useSSE hook, named event handling)
+14. ✅ Chat screen: message list, typing indicator, auto-scroll, suggested questions
+15. ✅ Identity gate screen: name + email + company form, localStorage pre-fill
+16. ✅ Rate limit screen: Cal.com booking button + inline email capture form
+17. ✅ Script tag embed — one tag, reads data-* attributes, auto-appends to body
+18. ⏭️ Umami analytics events (not started — add when deploying)
 
-### Phase 3 — Agents (Week 4)
-15. Intent classification agent
-16. Follow-up email agent (with delay + safeguards)
-17. Owner notification agent
-18. Content gap detection agent
+### Phase 3 — Agents (next up)
+19. ⬜ Intent classification agent — async post-session, labels visitor as recruiter/hiring_manager/developer/student
+20. ⬜ Owner notification agent — pings owner when high-intent visitor finishes
+21. ⬜ Follow-up email agent — sends warm email from owner 1-2 hrs after high-intent session
+22. ⬜ Content gap detection — weekly report of unanswered questions
 
-### Phase 4 — Productization (Week 5+)
-19. Admin dashboard
-20. Response caching layer
-21. Weekly digest agent
-22. Cal.com local setup + booking flow integration
-23. Multi-tenant deployment
-24. Resume tailoring agent (Phase 3 feature)
-25. Proactive context enrichment agent (Phase 3 feature)
+### Phase 4 — Productization
+23. ⬜ Deployment (Railway / Render / VPS) — Docker Compose, env config, real domain
+24. ⬜ Response caching layer — cache common answers in Valkey (zero LLM cost for repeat Qs)
+25. ⬜ Admin dashboard — upload docs, view leads + conversations, configure settings
+26. ⬜ Weekly digest agent — Monday email: visitor counts, intents, top questions
+27. ⬜ Cal.com self-hosted setup + real booking URL
+28. ⬜ Umami self-hosted analytics setup
 
 ---
 

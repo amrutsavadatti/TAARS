@@ -59,11 +59,9 @@ async def _stream_openai(
             {"role": "user",   "content": user_message},
         ],
         stream=True,
-        # Keep temperature low — we want factual, grounded answers
-        # not creative ones. 0.3 gives slightly natural phrasing
-        # without the model going off-script.
-        temperature=0.3,
-        max_tokens=1024,
+        # Low temperature for factual, deterministic answers grounded in the corpus.
+        temperature=0.1,
+        max_tokens=450,
     )
 
     async for chunk in stream:
@@ -99,8 +97,8 @@ async def _stream_anthropic(
         messages=[
             {"role": "user", "content": user_message},
         ],
-        temperature=0.3,
-        max_tokens=1024,
+        temperature=0.1,
+        max_tokens=450,
     ) as stream:
         async for text in stream.text_stream:
             yield text
