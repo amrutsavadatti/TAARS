@@ -112,10 +112,20 @@ async def _token_stream(
 
         yield _sse_done()
 
-        # 4. Save the completed turn + increment rate limit counter
+        # 4. Save to Valkey session + SQLite conversation log + increment rate counter
         full_answer = "".join(full_answer_parts)
         await session_store.append_turn(session_id, question=question, answer=full_answer)
         await rate_limiter.increment(session_id, ip=client_ip, email=visitor_email)
+
+        from backend.storage.conversation_store import log_turn
+        await log_turn(
+            session_id=session_id,
+            owner_id=owner_id,
+            question=question,
+            answer=full_answer,
+            visitor_email=visitor_email,
+            visitor_name=visitor_name,
+        )
 
         logger.info(
             "Chat stream complete — session=%s  answer_length=%d",

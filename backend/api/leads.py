@@ -50,28 +50,28 @@ async def capture_lead(body: LeadRequest, request: Request, x_api_key: str | Non
     owner_id = settings.owner_name.lower().replace(" ", "_")
     now = datetime.now(timezone.utc).isoformat()
 
+    # ── Persist to SQLite (primary, durable) ─────────────────────────────────
+    try:
+        from backend.storage.conversation_store import attach_email
+        await attach_email(
+            session_id=body.session_id or "",
+            email=email,
+        )
+    except Exception as e:
+        logger.warning("Failed to attach email in SQLite: %s", e)
+
+    # ── Also store in Valkey (for fast agent queries) ─────────────────────────
     try:
         valkey = request.app.state.valkey
-
-        # Store in a set (automatically deduped)
         leads_key = f"leads:{owner_id}"
         await valkey.sadd(leads_key, email)
-
-        # Store metadata (first capture wins — don't overwrite existing)
         meta_key = f"leads:meta:{email}"
         await valkey.hsetnx(meta_key, "session_id", body.session_id or "")
         await valkey.hsetnx(meta_key, "captured_at", now)
         await valkey.hsetnx(meta_key, "owner_id", owner_id)
-
         total = await valkey.scard(leads_key)
-
-        logger.info(
-            "🎯 Lead captured — email=%s  session=%s  total_leads=%d",
-            email, body.session_id, total,
-        )
-
+        logger.info("🎯 Lead captured — email=%s  session=%s  total_leads=%d", email, body.session_id, total)
     except Exception as e:
-        # Fail gracefully — don't break the widget if Valkey is down
         logger.warning("Failed to store lead in Valkey: %s", e)
 
     return {"status": "ok", "message": "Thanks! We'll be in touch."}

@@ -13,6 +13,10 @@ async def lifespan(app: FastAPI):
     from backend.storage.vector_store import get_vector_store
     from backend.storage.session_store import get_session_store
     from backend.middleware.rate_limiter import get_rate_limiter
+    from backend.database import create_tables
+
+    # Ensure SQLite tables exist
+    await create_tables()
 
     app.state.valkey = await get_valkey()
     app.state.vector_store = get_vector_store()
