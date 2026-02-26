@@ -11,19 +11,51 @@ async def lifespan(app: FastAPI):
     # Startup: initialise shared resources
     from backend.storage.cache import get_valkey
     from backend.storage.vector_store import get_vector_store
+    from backend.storage.session_store import get_session_store
+    from backend.middleware.rate_limiter import get_rate_limiter
 
     app.state.valkey = await get_valkey()
-    app.state.vector_store = await get_vector_store()
+    app.state.vector_store = get_vector_store()
+    app.state.session_store = await get_session_store()
+    app.state.rate_limiter = get_rate_limiter(app.state.valkey)
     yield
     # Shutdown: clean up
     await app.state.valkey.aclose()
 
 
 app = FastAPI(
-    title="Career AI Assistant",
-    description="RAG-powered portfolio chatbot API",
+    title="Career AI Assistant API",
+    description="""
+## RAG-powered portfolio chatbot backend
+
+This API powers an embeddable career assistant widget for portfolio websites.
+Visitors ask questions about the owner's career, skills, projects, and education.
+Answers are grounded exclusively in uploaded documents — no hallucination.
+
+### Key features
+- **Streaming chat** via Server-Sent Events (SSE)
+- **RAG pipeline**: vector search → optional reranking → LLM streaming
+- **Session memory**: multi-turn conversations via Valkey
+- **Rate limiting**: IP-based (OTP off) or email-based (OTP on)
+- **Identity gate**: optional visitor identification before chatting
+- **Document management**: ingest, list, delete
+
+### Authentication
+All endpoints require `X-API-Key` header.
+Owner-only endpoints (ingest, documents) will require a JWT admin token in production.
+
+### SSE event types (chat endpoint)
+| Event | Meaning |
+|-------|---------|
+| *(unnamed)* `data: "token"` | Regular response token |
+| `event: rate_limit` | Daily limit hit — widget shows CTA screen |
+| `event: identity_gate` | OTP gate triggered — widget shows name/email form |
+| `data: [DONE]` | Stream complete |
+""",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # ---------------------------------------------------------------------------

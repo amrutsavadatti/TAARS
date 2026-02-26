@@ -31,8 +31,10 @@ class Settings(BaseSettings):
 
     # --- OTP Gate ---
     enable_otp_gate: bool = False
-    otp_gate_mode: Literal["upfront", "after_n"] = "upfront"
-    otp_gate_after_n_questions: int = 3
+    otp_gate_mode: Literal["upfront", "after_n"] = "after_n"
+    otp_gate_after_n_questions: int = 1  # ask on 1st question by default;
+                                          # set to 2 or 3 to let visitor chat
+                                          # freely before the identity gate
     email_provider: str = "resend"
     email_from: str = "noreply@yourdomain.com"
     otp_expiry_seconds: int = 300
@@ -41,7 +43,6 @@ class Settings(BaseSettings):
     # --- Rate Limiting ---
     rate_limit_per_ip_per_day: int = 50
     rate_limit_per_email_per_day: int = 20
-    max_conversation_turns: int = 15
 
     # --- Session ---
     session_ttl_minutes: int = 30

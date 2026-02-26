@@ -8,3 +8,4 @@ data/uploads/
 data/conversations.db
 *.egg-info/
 .DS_Store
+raw_user_files/
