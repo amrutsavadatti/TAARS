@@ -18,5 +18,9 @@ raw_user_files/
 widget/node_modules/
 widget/dist/
 
+# Frontend dashboard
+frontend/node_modules/
+frontend/dist/
+
 # OS
 .DS_Store

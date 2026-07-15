@@ -1,7 +1,15 @@
 {
   "private": true,
+  "workspaces": [
+    "frontend",
+    "widget"
+  ],
   "scripts": {
-    "dev": "npm run dev --prefix widget",
-    "build": "npm run build --prefix widget"
+    "dev": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "widget:dev": "npm run dev --prefix widget",
+    "widget:build": "npm run build --prefix widget",
+    "frontend:dev": "npm run dev --prefix frontend",
+    "frontend:build": "npm run build --prefix frontend"
   }
 }
