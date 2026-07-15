@@ -76,7 +76,14 @@ class Retriever:
         (~90 MB), then caches them locally. Fully free, runs on CPU.
         """
         if self._cross_encoder is None:
-            from sentence_transformers import CrossEncoder
+            try:
+                from sentence_transformers import CrossEncoder
+            except ImportError as exc:
+                raise RuntimeError(
+                    "ENABLE_RERANKING=true requires the optional "
+                    "'sentence-transformers' package. Install it in your "
+                    "environment or disable reranking."
+                ) from exc
             logger.info("Loading cross-encoder model: %s", settings.rerank_model)
             self._cross_encoder = CrossEncoder(settings.rerank_model)
             logger.info("Cross-encoder loaded.")

@@ -70,7 +70,14 @@ class HuggingFaceEmbedder:
     """
 
     def __init__(self, model: str):
-        from langchain_huggingface import HuggingFaceEmbeddings
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError as exc:
+            raise RuntimeError(
+                "EMBEDDING_PROVIDER=huggingface requires optional local embedding "
+                "dependencies. Install 'sentence-transformers' in your environment "
+                "or use EMBEDDING_PROVIDER=openai."
+            ) from exc
 
         self._embeddings = HuggingFaceEmbeddings(
             model_name=model,

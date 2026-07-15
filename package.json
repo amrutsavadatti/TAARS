@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix widget",
+    "build": "npm run build --prefix widget"
+  }
+}

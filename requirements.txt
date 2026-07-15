@@ -12,7 +12,6 @@ langchain==0.3.7
 langchain-openai==0.2.9
 langchain-anthropic==0.3.0
 langchain-community==0.3.7
-langchain-huggingface==0.1.2
 langchain-chroma==0.1.4
 
 # Vector DB
@@ -22,8 +21,10 @@ chromadb==0.5.20
 openai==1.54.4
 anthropic==0.39.0
 
-# Reranking (local, free)
-sentence-transformers==3.3.1
+# Optional local reranking / HuggingFace embeddings:
+# install langchain-huggingface and sentence-transformers separately when
+# ENABLE_RERANKING=true or EMBEDDING_PROVIDER=huggingface. Keeping them out of
+# the base image avoids multi-GB CUDA Torch downloads during Docker builds.
 
 # Cache / sessions
 redis==5.2.0          # redis-py works with Valkey (same protocol)
