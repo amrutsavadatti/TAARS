@@ -80,11 +80,13 @@ from backend.api.chat import router as chat_router
 from backend.api.ingest import router as ingest_router
 from backend.api.documents import router as documents_router
 from backend.api.leads import router as leads_router
+from backend.api.profile import router as profile_router
 
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(ingest_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(leads_router, prefix="/api/v1")
+app.include_router(profile_router, prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------

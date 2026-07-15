@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -135,3 +136,30 @@ class AgentAction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     conversation: Mapped[Conversation] = relationship("Conversation", back_populates="agent_actions")
+
+
+class ProfileDraft(Base):
+    """Mutable owner-edited canonical profile draft."""
+
+    __tablename__ = "profile_drafts"
+
+    owner_id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_name: Mapped[str] = mapped_column(String, nullable=False, default="")
+    experiences: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class PublishedProfileSnapshot(Base):
+    """Immutable versioned profile snapshot used by future retrieval backends."""
+
+    __tablename__ = "published_profile_snapshots"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "version", name="uq_published_profile_owner_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

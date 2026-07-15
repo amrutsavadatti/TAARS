@@ -30,7 +30,9 @@
 
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { Dashboard, type DashboardConfig } from "./Dashboard";
 import { ChatWidget, type WidgetConfig } from "./ChatWidget";
+import dashboardCSS from "./styles/dashboard.css?inline";
 import widgetCSS from "./styles/widget.css?inline";
 
 /** Resolve base URL from the script tag that loaded us */
@@ -81,6 +83,18 @@ function readConfig(): WidgetConfig & { themeColor: string } {
   };
 }
 
+function readDashboardConfig(el?: HTMLElement | null): DashboardConfig {
+  const script =
+    (document.currentScript as HTMLScriptElement | null) ??
+    document.querySelector<HTMLScriptElement>('script[src*="widget"]');
+  const source = el ?? script;
+  const get = (attr: string, fallback = "") => source?.dataset[attr] ?? fallback;
+  return {
+    apiKey: get("apiKey", ""),
+    baseUrl: get("baseUrl", resolveBaseUrl()),
+  };
+}
+
 /** The custom element class — wraps React inside Shadow DOM */
 class CareerAssistantWidget extends HTMLElement {
   private _root: ReturnType<typeof createRoot> | null = null;
@@ -106,6 +120,27 @@ class CareerAssistantWidget extends HTMLElement {
     // Mount React
     this._root = createRoot(container);
     this._root.render(<ChatWidget config={config} />);
+  }
+
+  disconnectedCallback() {
+    this._root?.unmount();
+    this._root = null;
+  }
+}
+
+class TaarsDashboard extends HTMLElement {
+  private _root: ReturnType<typeof createRoot> | null = null;
+
+  connectedCallback() {
+    const shadow = this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = dashboardCSS;
+    shadow.appendChild(style);
+    const container = document.createElement("div");
+    container.id = "dashboard-root";
+    shadow.appendChild(container);
+    this._root = createRoot(container);
+    this._root.render(<Dashboard config={readDashboardConfig(this)} />);
   }
 
   disconnectedCallback() {
@@ -147,14 +182,35 @@ function adjustHex(hex: string, amount: number, alpha?: number): string {
 // ---------------------------------------------------------------
 
 const TAG = "career-assistant-widget";
+const DASHBOARD_TAG = "taars-dashboard";
 
 if (!customElements.get(TAG)) {
   customElements.define(TAG, CareerAssistantWidget);
 }
 
+if (!customElements.get(DASHBOARD_TAG)) {
+  customElements.define(DASHBOARD_TAG, TaarsDashboard);
+}
+
 // Auto-append the element to <body> so owners don't need an extra HTML tag.
 // Only do this once even if the script is somehow loaded twice.
-if (!document.querySelector(TAG)) {
+const loaderScript =
+  (document.currentScript as HTMLScriptElement | null) ??
+  document.querySelector<HTMLScriptElement>('script[src*="widget"]');
+const shouldAutoMountDashboard = loaderScript?.dataset.mode === "dashboard";
+
+if (shouldAutoMountDashboard && !document.querySelector(DASHBOARD_TAG)) {
+  const el = document.createElement(DASHBOARD_TAG);
+  if (loaderScript?.dataset.apiKey) el.dataset.apiKey = loaderScript.dataset.apiKey;
+  if (loaderScript?.dataset.baseUrl) el.dataset.baseUrl = loaderScript.dataset.baseUrl;
+  if (document.body) {
+    document.body.appendChild(el);
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      document.body.appendChild(el);
+    });
+  }
+} else if (!shouldAutoMountDashboard && !document.querySelector(TAG)) {
   const el = document.createElement(TAG);
   // Run after DOM is ready
   if (document.body) {
