@@ -33,7 +33,6 @@ Public API:
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -41,6 +40,7 @@ from datetime import datetime, timezone
 import redis.asyncio as aioredis
 
 from backend.config import settings
+from backend.sse import sse_event
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class RateLimitResult:
         The widget's EventSource listener checks e.type to decide
         which screen to render (RateLimitScreen vs OTPGate).
         """
-        return f"event: {self.event_type}\ndata: {json.dumps(self.payload)}\n\n"
+        return sse_event(self.event_type, self.payload)
 
 
 # ---------------------------------------------------------------------------

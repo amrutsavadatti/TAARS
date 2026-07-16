@@ -30,6 +30,21 @@ export interface GatePayload {
   questions_answered?: number;
 }
 
+export interface AnswerEvidence {
+  source_type: string;
+  source_id: string;
+  title: string;
+  quote: string;
+}
+
+export interface AnswerMetadata {
+  status: "SUPPORTED" | "PARTIAL" | "UNANSWERABLE";
+  evidence: AnswerEvidence[];
+  snapshot_version: number;
+  knowledge_backend: string;
+  knowledge_backend_version: string;
+}
+
 interface UseSSEOptions {
   apiKey: string;
   baseUrl: string;
@@ -40,6 +55,8 @@ interface UseSSEOptions {
   onDone: () => void;
   /** Called when a named gate event arrives */
   onGate: (payload: GatePayload) => void;
+  /** Called once retrieval and grounding metadata is available */
+  onMetadata: (payload: AnswerMetadata) => void;
   /** Called on network/parse errors */
   onError: (msg: string) => void;
 }
@@ -120,6 +137,18 @@ export function useSSE(opts: UseSSEOptions) {
           opts.onGate({ ...payload, reason: "identity_gate" });
         } catch {
           opts.onGate({ reason: "identity_gate" });
+        }
+      });
+
+      es.addEventListener("answer_metadata", (event: Event) => {
+        const me = event as MessageEvent;
+        try {
+          opts.onMetadata(JSON.parse(me.data) as AnswerMetadata);
+        } catch {
+          opts.onError("The assistant returned invalid evidence metadata.");
+          es.close();
+          esRef.current = null;
+          setState("error");
         }
       });
 

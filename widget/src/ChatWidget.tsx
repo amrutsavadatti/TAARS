@@ -17,7 +17,7 @@ import { MessageList, type Message } from "./components/MessageList";
 import { SuggestedQuestions } from "./components/SuggestedQuestions";
 import { IdentityGateScreen } from "./components/IdentityGateScreen";
 import { RateLimitScreen } from "./components/RateLimitScreen";
-import { useSSE, type GatePayload } from "./hooks/useSSE";
+import { useSSE, type AnswerMetadata, type GatePayload } from "./hooks/useSSE";
 import {
   getSessionId,
   getSavedEmail,
@@ -90,6 +90,21 @@ export function ChatWidget({ config }: { config: WidgetConfig }) {
       } else {
         setScreen("identity_gate");
       }
+    },
+    onMetadata: (metadata: AnswerMetadata) => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (!last || last.role !== "assistant") return prev;
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...last,
+            status: metadata.status,
+            evidence: metadata.evidence,
+            snapshotVersion: metadata.snapshot_version,
+          },
+        ];
+      });
     },
     onError: (msg) => {
       setMessages((prev) => {

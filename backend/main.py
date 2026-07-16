@@ -34,11 +34,11 @@ app = FastAPI(
 
 This API powers an embeddable career assistant widget for portfolio websites.
 Visitors ask questions about the owner's career, skills, projects, and education.
-Answers are grounded exclusively in uploaded documents — no hallucination.
+Answers are grounded exclusively in the owner's published canonical profile.
 
 ### Key features
 - **Streaming chat** via Server-Sent Events (SSE)
-- **RAG pipeline**: vector search → optional reranking → LLM streaming
+- **Grounded answers**: pgvector retrieval → evidence gate → LLM streaming
 - **Session memory**: multi-turn conversations via Valkey
 - **Rate limiting**: IP-based (OTP off) or email-based (OTP on)
 - **Identity gate**: optional visitor identification before chatting
@@ -52,6 +52,7 @@ Owner-only endpoints (ingest, documents) will require a JWT admin token in produ
 | Event | Meaning |
 |-------|---------|
 | *(unnamed)* `data: "token"` | Regular response token |
+| `event: answer_metadata` | Answer status, profile version, backend, and public evidence |
 | `event: rate_limit` | Daily limit hit — widget shows CTA screen |
 | `event: identity_gate` | OTP gate triggered — widget shows name/email form |
 | `data: [DONE]` | Stream complete |
@@ -81,12 +82,14 @@ from backend.api.ingest import router as ingest_router
 from backend.api.documents import router as documents_router
 from backend.api.leads import router as leads_router
 from backend.api.profile import router as profile_router
+from backend.api.profile_indexing import router as profile_indexing_router
 
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(ingest_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(leads_router, prefix="/api/v1")
 app.include_router(profile_router, prefix="/api/v1")
+app.include_router(profile_indexing_router, prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------

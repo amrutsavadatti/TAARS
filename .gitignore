@@ -15,10 +15,12 @@ data/conversations.db
 raw_user_files/
 
 # Widget
+node_modules/
 widget/node_modules/
 widget/dist/
 
 # Frontend dashboard
+frontend/node_modules
 frontend/node_modules/
 frontend/dist/
 

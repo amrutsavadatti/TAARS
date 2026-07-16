@@ -233,6 +233,75 @@
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 
+.answer-grounding {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.answer-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  color: #166534;
+  font-weight: 600;
+}
+
+.answer-status.partial {
+  color: #92400e;
+}
+
+.answer-status.unanswerable {
+  color: var(--text-muted);
+}
+
+.answer-evidence {
+  margin-top: 4px;
+}
+
+.answer-evidence summary {
+  width: fit-content;
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.evidence-item {
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
+.evidence-item strong,
+.evidence-item p {
+  display: block;
+}
+
+.evidence-item strong {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.evidence-item p {
+  margin-top: 3px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.evidence-type {
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
 /* Typing indicator */
 .typing-indicator {
   display: flex;

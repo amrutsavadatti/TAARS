@@ -5,6 +5,7 @@ GET /api/v1/chat/stream?q={question}&session_id={id}
 Headers: X-API-Key: {owner_api_key}
 
 Response: text/event-stream
+    event: answer_metadata\ndata: {status, evidence, snapshot_version, ...}\n\n
     data: token1\n\n
     data: token2\n\n
     data: [DONE]\n\n
@@ -12,13 +13,12 @@ Response: text/event-stream
 The client (browser EventSource or fetch with ReadableStream) reads
 tokens as they arrive and appends them to the chat UI in real time.
 
-Rate limiting and session history are stubs for now — they will be
-wired up once session_store.py and rate_limiter.py are implemented.
+Every completed assistant message is stored with its published-profile
+version, retrieval backend, answer status, and ordered evidence.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import AsyncGenerator
@@ -27,7 +27,10 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from backend.config import settings
-from backend.core.rag_engine import stream_answer
+from backend.answer_engine import AnswerEngine
+from backend.database import get_db
+from backend.owner import configured_owner_id
+from backend.sse import sse_data, sse_done, sse_event
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +40,6 @@ router = APIRouter(tags=["chat"])
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
-
-def _sse(data: str) -> str:
-    """
-    Format a single SSE message.
-
-    SSE protocol:
-      - Each message is "data: {payload}\n\n"
-      - The double newline signals the end of one message to the client
-      - The client's EventSource fires an 'message' event for each one
-
-    We JSON-encode the token so special characters (newlines inside
-    the token itself, quotes, etc.) don't break the SSE framing.
-    """
-    return f"data: {json.dumps(data)}\n\n"
-
-
-def _sse_done() -> str:
-    """Terminal SSE frame — tells the client the stream is finished."""
-    return "data: [DONE]\n\n"
-
 
 async def _token_stream(
     request: Request,
@@ -68,12 +51,12 @@ async def _token_stream(
     visitor_name: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
-    Async generator that runs the RAG pipeline and yields SSE-formatted frames.
+    Run the grounded answer pipeline and yield SSE-formatted frames.
 
     1. Load session history from Valkey
-    2. Call rag_engine.stream_answer() — streams tokens
-    3. Wrap each token in SSE format and yield to browser
-    4. Assemble full answer, save turn to session store
+    2. Retrieve evidence from the indexed published profile
+    3. Emit answer metadata, then stream grounded answer tokens
+    4. Save the completed turn and its provenance
     5. Send [DONE] to signal end of stream
 
     If anything goes wrong, yield a graceful error frame so the browser
@@ -100,17 +83,22 @@ async def _token_stream(
             # Yield a named SSE event so the widget knows to render
             # the RateLimitScreen or OTPGate — not a plain chat bubble
             yield rl_result.sse_event()
-            yield _sse_done()
+            yield sse_done()
             return
 
-        # 3. Stream answer token by token, collecting the full response
+        # 3. Resolve evidence once, then stream the answer from that immutable plan.
+        answer_streamer = getattr(request.app.state, "answer_streamer", None)
+        answer_engine = (
+            AnswerEngine(token_streamer=answer_streamer) if answer_streamer else AnswerEngine()
+        )
+        async with get_db() as db:
+            plan = await answer_engine.plan(db, owner_id, question, history)
+
+        yield sse_event("answer_metadata", plan.metadata)
         full_answer_parts: list[str] = []
-
-        async for token in stream_answer(question, history=history, owner_id=owner_id):
+        async for token in answer_engine.stream(plan):
             full_answer_parts.append(token)
-            yield _sse(token)
-
-        yield _sse_done()
+            yield sse_data(token)
 
         # 4. Save to Valkey session + SQLite conversation log + increment rate counter
         full_answer = "".join(full_answer_parts)
@@ -125,7 +113,10 @@ async def _token_stream(
             answer=full_answer,
             visitor_email=visitor_email,
             visitor_name=visitor_name,
+            answer_metadata=plan.metadata,
         )
+
+        yield sse_done()
 
         logger.info(
             "Chat stream complete — session=%s  answer_length=%d",
@@ -138,8 +129,8 @@ async def _token_stream(
             f"Something went wrong. Please try again or contact "
             f"{settings.owner_name} at {settings.owner_contact_email}."
         )
-        yield _sse(error_msg)
-        yield _sse_done()
+        yield sse_data(error_msg)
+        yield sse_done()
 
 
 # ---------------------------------------------------------------------------
@@ -191,12 +182,12 @@ async def chat_stream(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     """
-    Stream a RAG-powered answer to the visitor's question.
+    Stream an answer grounded in the indexed published profile.
 
     - Validates the API key (header or query param — EventSource uses query param)
     - Checks rate limit (IP-based when OTP off, email-based when OTP on)
     - Fires identity gate SSE event when OTP threshold is reached
-    - Runs the full RAG pipeline and streams tokens
+    - Retrieves owner-approved evidence and streams answer tokens
     - Saves turn to session store and increments rate limit counter
 
     Each SSE frame is:  data: "token text here"\\n\\n
@@ -217,7 +208,7 @@ async def chat_stream(
         logger.info("No session_id provided — generated: %s", session_id)
 
     # Resolve owner from API key (stub — uses config default for now)
-    owner_id = settings.owner_name
+    owner_id = configured_owner_id()
 
     return StreamingResponse(
         _token_stream(

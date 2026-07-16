@@ -28,7 +28,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.database import get_db
-from backend.models import Conversation, Message, Visitor
+from backend.models import Conversation, Message, MessageEvidence, Visitor
+from backend.profile_indexing_schemas import AnswerMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ async def log_turn(
     answer: str,
     visitor_email: str | None = None,
     visitor_name: str | None = None,
+    answer_metadata: AnswerMetadata | None = None,
 ) -> None:
     """
     Persist one conversation turn (user question + assistant answer).
@@ -82,13 +84,29 @@ async def log_turn(
                 content=question,
                 created_at=now,
             ))
+            assistant_message_id = _new_id()
             db.add(Message(
-                id=_new_id(),
+                id=assistant_message_id,
                 conversation_id=conversation.id,
                 role="assistant",
                 content=answer,
+                answer_status=answer_metadata.status if answer_metadata else None,
+                profile_snapshot_version=answer_metadata.snapshot_version if answer_metadata else None,
+                knowledge_backend=answer_metadata.knowledge_backend if answer_metadata else None,
+                knowledge_backend_version=(
+                    answer_metadata.knowledge_backend_version if answer_metadata else None
+                ),
                 created_at=now,
             ))
+            if answer_metadata:
+                db.add_all([
+                    MessageEvidence(
+                        id=_new_id(), message_id=assistant_message_id, position=position,
+                        source_type=evidence.source_type, source_id=evidence.source_id,
+                        title=evidence.title, quote=evidence.quote,
+                    )
+                    for position, evidence in enumerate(answer_metadata.evidence)
+                ])
 
             # ── 4. Increment message count ────────────────────────────
             await db.execute(

@@ -60,6 +60,8 @@ class Settings(BaseSettings):
                                          # career queries score ~0.65-0.72
                                          # off-topic queries score ~0.50-0.58
     enable_response_cache: bool = True
+    profile_partial_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
+    profile_supported_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     session_end_timeout_minutes: int = 10
 
     # --- Ingestion ---

@@ -30,6 +30,11 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
         assert empty.status_code == 200
         assert empty.json()["owner_name"] == "Test Owner"
         assert empty.json()["experiences"] == []
+        assert empty.json()["projects"] == []
+        assert empty.json()["skills"] == []
+        assert empty.json()["education"] == []
+        assert empty.json()["achievements"] == []
+        assert empty.json()["personal_topics"] == []
 
         first_draft = {
             "owner_name": "Test Owner",
@@ -47,17 +52,33 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                     "display_order": 0,
                 }
             ],
+            "projects": [
+                {
+                    "name": "Career assistant",
+                    "problem": "Visitors needed better answers about the owner's background.",
+                    "contribution": "Built the profile publication workflow.",
+                    "outcome": "",
+                    "technologies": ["FastAPI", "React", "PostgreSQL"],
+                    "start_month": 2,
+                    "start_year": 2024,
+                    "end_month": 1,
+                    "end_year": 2024,
+                    "display_order": 0,
+                }
+            ],
         }
         create_res = await client.put("/api/v1/profile/draft", json=first_draft, headers=headers)
         assert create_res.status_code == 200
         created_exp_id = create_res.json()["experiences"][0]["id"]
+        created_project_id = create_res.json()["projects"][0]["id"]
         assert created_exp_id.startswith("exp_")
+        assert created_project_id.startswith("proj_")
 
         publish_blocked = await client.post("/api/v1/profile/publish", headers=headers)
         assert publish_blocked.status_code == 422
         issue_fields = {issue["field"] for issue in publish_blocked.json()["detail"]["issues"]}
         assert "experiences.0.end" in issue_fields
-        assert "experiences.0.outcome" in issue_fields
+        assert "projects.0.end" in issue_fields
 
         edited_and_added = {
             "owner_name": "Test Owner",
@@ -86,6 +107,75 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                     "display_order": 0,
                 },
             ],
+            "projects": [
+                {
+                    "id": created_project_id,
+                    "name": "Career assistant",
+                    "problem": "Visitors needed better answers about the owner's background.",
+                    "contribution": "Built a canonical profile publication workflow.",
+                    "outcome": "Created a stable profile snapshot for future indexing.",
+                    "measurable_impact": "First retrieval contract established.",
+                    "technologies": ["FastAPI", "React", "PostgreSQL"],
+                    "collaborators": ["Product"],
+                    "links": ["https://example.com/profile"],
+                    "start_month": 2,
+                    "start_year": 2024,
+                    "end_month": 6,
+                    "end_year": 2024,
+                    "featured": True,
+                    "visibility": "public",
+                    "display_order": 0,
+                }
+            ],
+            "skills": [
+                {
+                    "name": "Backend systems",
+                    "category": "Engineering",
+                    "aliases": ["APIs", "Databases"],
+                    "context": "Builds durable API contracts.",
+                    "evidence": "Published profile API.",
+                    "display_order": 0,
+                }
+            ],
+            "education": [
+                {
+                    "institution": "State University",
+                    "credential": "BS",
+                    "field": "Computer Science",
+                    "start_month": 8,
+                    "start_year": 2018,
+                    "end_month": 5,
+                    "end_year": 2022,
+                    "summary": "Studied software systems.",
+                    "outcome": "Built a foundation in product engineering.",
+                    "display_order": 0,
+                }
+            ],
+            "achievements": [
+                {
+                    "title": "Launch award",
+                    "summary": "Recognized for shipping the first canonical profile flow.",
+                    "outcome": "Improved confidence in the product direction.",
+                    "month": 6,
+                    "year": 2024,
+                    "featured": True,
+                    "display_order": 0,
+                }
+            ],
+            "personal_topics": [
+                {
+                    "category": "Interests",
+                    "detail": "Enjoys building useful AI products.",
+                    "approved": True,
+                    "display_order": 0,
+                },
+                {
+                    "category": "Private",
+                    "detail": "Do not publish this topic.",
+                    "approved": False,
+                    "display_order": 1,
+                },
+            ],
         }
         second_save = await client.put("/api/v1/profile/draft", json=edited_and_added, headers=headers)
         assert second_save.status_code == 200
@@ -93,6 +183,11 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
         assert reloaded_draft.status_code == 200
         draft_experiences = reloaded_draft.json()["experiences"]
         assert [exp["organization"] for exp in draft_experiences] == ["Beta Labs", "Acme Corp"]
+        assert reloaded_draft.json()["projects"][0]["id"] == created_project_id
+        assert reloaded_draft.json()["skills"][0]["id"].startswith("skill_")
+        assert reloaded_draft.json()["education"][0]["id"].startswith("edu_")
+        assert reloaded_draft.json()["achievements"][0]["id"].startswith("ach_")
+        assert reloaded_draft.json()["personal_topics"][0]["id"].startswith("topic_")
 
         beta_id = draft_experiences[0]["id"]
         removed_one = {
@@ -104,6 +199,11 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                     "display_order": 0,
                 }
             ],
+            "projects": reloaded_draft.json()["projects"],
+            "skills": reloaded_draft.json()["skills"],
+            "education": reloaded_draft.json()["education"],
+            "achievements": reloaded_draft.json()["achievements"],
+            "personal_topics": reloaded_draft.json()["personal_topics"],
         }
         remove_res = await client.put("/api/v1/profile/draft", json=removed_one, headers=headers)
         assert remove_res.status_code == 200
@@ -132,6 +232,39 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                 "display_order": 0,
             }
         ]
+        assert snapshot["projects"][0] == {
+            "id": created_project_id,
+            "type": "project",
+            "name": "Career assistant",
+            "problem": "Visitors needed better answers about the owner's background.",
+            "contribution": "Built a canonical profile publication workflow.",
+            "outcome": "Created a stable profile snapshot for future indexing.",
+            "measurable_impact": "First retrieval contract established.",
+            "technologies": ["FastAPI", "React", "PostgreSQL"],
+            "collaborators": ["Product"],
+            "links": ["https://example.com/profile"],
+            "start_month": 2,
+            "start_year": 2024,
+            "end_month": 6,
+            "end_year": 2024,
+            "is_current": False,
+            "featured": True,
+            "visibility": "public",
+            "display_order": 0,
+        }
+        assert snapshot["skills"][0]["name"] == "Backend systems"
+        assert snapshot["education"][0]["institution"] == "State University"
+        assert snapshot["achievements"][0]["title"] == "Launch award"
+        assert snapshot["personal_topics"] == [
+            {
+                "id": reloaded_draft.json()["personal_topics"][0]["id"],
+                "type": "personal_topic",
+                "category": "Interests",
+                "detail": "Enjoys building useful AI products.",
+                "approved": True,
+                "display_order": 0,
+            }
+        ]
 
         changed_draft_after_publish = {
             "owner_name": "Test Owner",
@@ -142,6 +275,16 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                     "outcome": "Changed draft outcome.",
                 }
             ],
+            "projects": [
+                {
+                    **remove_res.json()["projects"][0],
+                    "outcome": "Changed draft project outcome.",
+                }
+            ],
+            "skills": remove_res.json()["skills"],
+            "education": remove_res.json()["education"],
+            "achievements": remove_res.json()["achievements"],
+            "personal_topics": remove_res.json()["personal_topics"],
         }
         changed = await client.put("/api/v1/profile/draft", json=changed_draft_after_publish, headers=headers)
         assert changed.status_code == 200
@@ -153,5 +296,7 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
         reload_draft = await client.get("/api/v1/profile", headers=headers)
         reload_published = await client.get("/api/v1/profile/published-snapshot", headers=headers)
         assert reload_draft.json()["experiences"][0]["role"] == "Changed Draft Role"
+        assert reload_draft.json()["projects"][0]["outcome"] == "Changed draft project outcome."
         assert reload_draft.json()["published_version"] == 1
         assert reload_published.json()["snapshot"]["experiences"][0]["role"] == "Principal Platform Lead"
+        assert reload_published.json()["snapshot"]["projects"][0]["outcome"] == "Created a stable profile snapshot for future indexing."

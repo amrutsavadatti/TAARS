@@ -136,7 +136,7 @@ def _build_context_block(chunks: list[RankedChunk]) -> str:
     return "\n\n".join(parts)
 
 
-def _build_history_block(history: list[dict]) -> str:
+def build_history_block(history: list[dict]) -> str:
     """
     Format conversation history into a readable block injected into the
     system prompt.
@@ -193,7 +193,7 @@ def build_prompt(
           - user_message  → the "user" role message
     """
     context_block = _build_context_block(chunks)
-    history_block = _build_history_block(history)
+    history_block = build_history_block(history)
 
     system_prompt = _SYSTEM_TEMPLATE.format(
         owner_name=settings.owner_name,

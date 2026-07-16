@@ -116,9 +116,35 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String, nullable=False)   # "user" | "assistant"
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    profile_snapshot_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    knowledge_backend: Mapped[str | None] = mapped_column(String, nullable=True)
+    knowledge_backend_version: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     conversation: Mapped[Conversation] = relationship("Conversation", back_populates="messages")
+    evidence: Mapped[list[MessageEvidence]] = relationship(
+        "MessageEvidence", back_populates="message", cascade="all, delete-orphan",
+        order_by="MessageEvidence.position",
+    )
+
+
+class MessageEvidence(Base):
+    """Public evidence attached to one completed assistant message."""
+
+    __tablename__ = "message_evidence"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    message_id: Mapped[str] = mapped_column(
+        String, ForeignKey("messages.id"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+
+    message: Mapped[Message] = relationship("Message", back_populates="evidence")
 
 
 class AgentAction(Base):
@@ -146,6 +172,11 @@ class ProfileDraft(Base):
     owner_id: Mapped[str] = mapped_column(String, primary_key=True)
     owner_name: Mapped[str] = mapped_column(String, nullable=False, default="")
     experiences: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    projects: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    skills: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    education: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    achievements: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    personal_topics: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
@@ -163,3 +194,33 @@ class PublishedProfileSnapshot(Base):
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ProfileIndexState(Base):
+    """Tracks which published profile snapshot version has been indexed."""
+
+    __tablename__ = "profile_index_states"
+
+    owner_id: Mapped[str] = mapped_column(String, primary_key=True)
+    indexed_snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    backend_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ProfileIndexChunk(Base):
+    """Searchable chunk derived from a published profile snapshot."""
+
+    __tablename__ = "profile_index_chunks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    embedding: Mapped[list[float]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

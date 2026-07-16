@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import type { AnswerEvidence } from "../hooks/useSSE";
 
 export interface Message {
   id: string;
@@ -7,6 +8,9 @@ export interface Message {
   content: string;
   /** True while the assistant is still streaming this message */
   streaming?: boolean;
+  status?: "SUPPORTED" | "PARTIAL" | "UNANSWERABLE";
+  evidence?: AnswerEvidence[];
+  snapshotVersion?: number;
 }
 
 interface Props {
@@ -51,6 +55,35 @@ export function MessageList({ messages, greeting }: Props) {
             {msg.content}
             {/* Blinking cursor while streaming */}
             {msg.streaming && <span style={{ opacity: 0.6 }}>▌</span>}
+            {msg.role === "assistant" && !msg.streaming && msg.status && (
+              <div className="answer-grounding">
+                <span className={`answer-status ${msg.status.toLowerCase()}`}>
+                  {msg.status === "SUPPORTED"
+                    ? "Grounded"
+                    : msg.status === "PARTIAL"
+                      ? "Partially grounded"
+                      : "No profile evidence"}
+                </span>
+                {msg.evidence && msg.evidence.length > 0 && (
+                  <details className="answer-evidence">
+                    <summary>
+                      {msg.evidence.length} {msg.evidence.length === 1 ? "source" : "sources"}
+                    </summary>
+                    <div className="evidence-list">
+                      {msg.evidence.map((evidence) => (
+                        <div className="evidence-item" key={`${evidence.source_type}:${evidence.source_id}`}>
+                          <span className="evidence-type">
+                            {evidence.source_type.replace("_", " ")}
+                          </span>
+                          <strong>{evidence.title}</strong>
+                          <p>{evidence.quote}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ))}
