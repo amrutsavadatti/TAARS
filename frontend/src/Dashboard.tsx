@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FileUp, GripVertical, LoaderCircle, Trash2 } from "lucide-react";
 
 export interface DashboardConfig {
   apiKey: string;
@@ -8,7 +8,7 @@ export interface DashboardConfig {
 
 type NumberField = number | "";
 type ViewName = "home" | "profile" | "preview" | "indexing" | "account";
-type SectionName = "experiences" | "projects" | "skills" | "education" | "achievements" | "personal_topics";
+type SectionName = "experiences" | "projects" | "skills" | "education" | "certifications" | "achievements" | "personal_topics";
 
 interface Experience {
   id?: string;
@@ -27,6 +27,7 @@ interface Experience {
 interface Project {
   id?: string;
   name: string;
+  summary: string;
   problem: string;
   contribution: string;
   outcome: string;
@@ -80,6 +81,21 @@ interface Achievement {
   display_order: number;
 }
 
+interface Certification {
+  id?: string;
+  name: string;
+  issuer: string;
+  issue_month: NumberField;
+  issue_year: NumberField;
+  expiration_month: NumberField;
+  expiration_year: NumberField;
+  credential_id: string;
+  credential_url: string;
+  summary: string;
+  evidence: string;
+  display_order: number;
+}
+
 interface PersonalTopic {
   id?: string;
   category: string;
@@ -95,9 +111,11 @@ interface ProfileDraft {
   projects: Project[];
   skills: Skill[];
   education: Education[];
+  certifications: Certification[];
   achievements: Achievement[];
   personal_topics: PersonalTopic[];
   published_version: number | null;
+  candidate_version: number | null;
   has_published_snapshot: boolean;
 }
 
@@ -109,12 +127,24 @@ type CanonicalSnapshot = Partial<ProfileDraft> & {
 interface PublishedSnapshot {
   version: number;
   published_at: string;
+  activated_at: string | null;
+  publication_status: "candidate" | "active" | "superseded";
+  is_active: boolean;
   snapshot: CanonicalSnapshot;
+}
+
+interface ProfileVersion {
+  version: number;
+  published_at: string;
+  activated_at: string | null;
+  publication_status: "candidate" | "active" | "superseded";
+  is_active: boolean;
 }
 
 interface IndexStatus {
   owner_id: string;
   published_version: number | null;
+  candidate_version: number | null;
   indexed_version: number | null;
   indexed_backend_version: string | null;
   indexed_at: string | null;
@@ -154,6 +184,21 @@ interface ApiIssue {
   message: string;
 }
 
+interface ResumeImportResponse {
+  filename: string;
+  profile: Pick<ProfileDraft, "owner_name" | "experiences" | "projects" | "skills" | "education" | "certifications" | "achievements">;
+  generated_fields: string[];
+  warnings: string[];
+}
+
+interface ResumeImportSummary {
+  filename: string;
+  added: number;
+  duplicates: number;
+  generated: number;
+  warnings: string[];
+}
+
 interface AccountDetails {
   name: string;
   email: string;
@@ -176,6 +221,7 @@ const emptyExperience = (displayOrder: number): Experience => ({
 
 const emptyProject = (displayOrder: number): Project => ({
   name: "",
+  summary: "",
   problem: "",
   contribution: "",
   outcome: "",
@@ -226,6 +272,20 @@ const emptyAchievement = (displayOrder: number): Achievement => ({
   display_order: displayOrder,
 });
 
+const emptyCertification = (displayOrder: number): Certification => ({
+  name: "",
+  issuer: "",
+  issue_month: "",
+  issue_year: "",
+  expiration_month: "",
+  expiration_year: "",
+  credential_id: "",
+  credential_url: "",
+  summary: "",
+  evidence: "",
+  display_order: displayOrder,
+});
+
 const emptyPersonalTopic = (displayOrder: number): PersonalTopic => ({
   category: "",
   detail: "",
@@ -238,6 +298,7 @@ const sectionFactories = {
   projects: emptyProject,
   skills: emptySkill,
   education: emptyEducation,
+  certifications: emptyCertification,
   achievements: emptyAchievement,
   personal_topics: emptyPersonalTopic,
 };
@@ -248,6 +309,86 @@ function toNullableNumber(value: NumberField): number | null {
 
 function splitCsv(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function identityPart(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function identity(...values: unknown[]): string {
+  return values.map(identityPart).join("|");
+}
+
+function fillMissingFields<T extends { display_order: number }>(current: T, incoming: T): T {
+  const merged = { ...current } as Record<string, unknown>;
+  Object.entries(incoming).forEach(([key, value]) => {
+    if (key === "id" || key === "display_order") return;
+    const currentValue = merged[key];
+    if (Array.isArray(currentValue) && Array.isArray(value)) {
+      merged[key] = [...new Set([...currentValue, ...value].filter(Boolean))];
+    } else if ((currentValue === "" || currentValue === null || currentValue === undefined) && value !== "" && value !== null && value !== undefined) {
+      merged[key] = value;
+    }
+  });
+  return merged as T;
+}
+
+function mergeUniqueBy<T extends { display_order: number }>(
+  existing: T[],
+  incoming: T[],
+  getIdentity: (item: T) => string,
+): { items: T[]; added: number; duplicates: number } {
+  const items = [...existing];
+  const positions = new Map(items.map((item, index) => [getIdentity(item), index]));
+  let added = 0;
+  let duplicates = 0;
+  incoming.forEach((item) => {
+    const key = getIdentity(item);
+    if (!key.replace(/\|/g, "")) return;
+    const position = positions.get(key);
+    if (position !== undefined) {
+      items[position] = fillMissingFields(items[position], item);
+      duplicates += 1;
+      return;
+    }
+    positions.set(key, items.length);
+    items.push(item);
+    added += 1;
+  });
+  return {
+    items: items.map((item, index) => ({ ...item, display_order: index })),
+    added,
+    duplicates,
+  };
+}
+
+function mergeImportedProfile(current: ProfileDraft, imported: ProfileDraft) {
+  const experiences = mergeUniqueBy(current.experiences, imported.experiences, (item) =>
+    identity(item.organization, item.role, item.start_year, item.start_month));
+  const projects = mergeUniqueBy(current.projects, imported.projects, (item) => identity(item.name));
+  const skills = mergeUniqueBy(current.skills, imported.skills, (item) => identity(item.name));
+  const education = mergeUniqueBy(current.education, imported.education, (item) =>
+    identity(item.institution, item.credential, item.field));
+  const certifications = mergeUniqueBy(current.certifications, imported.certifications, (item) =>
+    identity(item.name, item.issuer));
+  const achievements = mergeUniqueBy(current.achievements, imported.achievements, (item) =>
+    identity(item.title, item.year, item.month));
+  const results = [experiences, projects, skills, education, certifications, achievements];
+
+  return {
+    profile: {
+      ...current,
+      owner_name: current.owner_name.trim() || imported.owner_name,
+      experiences: experiences.items,
+      projects: projects.items,
+      skills: skills.items,
+      education: education.items,
+      certifications: certifications.items,
+      achievements: achievements.items,
+    },
+    added: results.reduce((total, result) => total + result.added, 0),
+    duplicates: results.reduce((total, result) => total + result.duplicates, 0),
+  };
 }
 
 function toMonthValue(month: NumberField | null | undefined, year: NumberField | null | undefined): string {
@@ -292,9 +433,10 @@ function validateProfileForPublication(profile: ProfileDraft): ApiIssue[] {
   profile.projects.forEach((item, index) => {
     const prefix = `projects.${index}`;
     if (!item.name.trim()) add(`${prefix}.name`, "Project name is required.");
+    if (!item.summary.trim()) add(`${prefix}.summary`, "Resume description is required.");
     if (!item.problem.trim()) add(`${prefix}.problem`, "Problem is required.");
     if (!item.contribution.trim()) add(`${prefix}.contribution`, "Contribution is required.");
-    validateRequiredDateRange(issues, prefix, item);
+    validateOptionalDateRange(issues, prefix, item);
   });
 
   profile.skills.forEach((item, index) => {
@@ -306,6 +448,11 @@ function validateProfileForPublication(profile: ProfileDraft): ApiIssue[] {
     if (!item.institution.trim()) add(`${prefix}.institution`, "Institution is required.");
     if (!item.credential.trim()) add(`${prefix}.credential`, "Credential is required.");
     validateRequiredDateRange(issues, prefix, item);
+  });
+
+  profile.certifications.forEach((item, index) => {
+    if (!item.name.trim()) add(`certifications.${index}.name`, "Certification name is required.");
+    if (!item.issuer.trim()) add(`certifications.${index}.issuer`, "Issuer is required.");
   });
 
   profile.achievements.forEach((item, index) => {
@@ -337,12 +484,23 @@ function validateRequiredDateRange(
   }
 }
 
+function validateOptionalDateRange(
+  issues: ApiIssue[],
+  prefix: string,
+  item: { start_month: NumberField; start_year: NumberField; end_month: NumberField; end_year: NumberField; is_current: boolean },
+) {
+  if (isDateRangeBackwards(item)) {
+    issues.push({ field: `${prefix}.end`, message: "End date cannot be before start date." });
+  }
+}
+
 function sectionCount(profile: Pick<ProfileDraft, SectionName>): number {
   return (
     profile.experiences.length +
     profile.projects.length +
     profile.skills.length +
     profile.education.length +
+    profile.certifications.length +
     profile.achievements.length +
     profile.personal_topics.filter((topic) => topic.approved).length
   );
@@ -354,7 +512,7 @@ function completionScore(profile: ProfileDraft): number {
     profile.experiences.length > 0,
     profile.experiences.every((item) => item.organization && item.role && item.summary),
     profile.projects.length > 0,
-    profile.projects.every((item) => item.name && item.problem && item.contribution),
+    profile.projects.every((item) => item.name && item.summary && item.problem && item.contribution),
     profile.skills.length > 0,
     profile.education.length > 0,
   ];
@@ -397,6 +555,14 @@ function normalizeForApi(profile: ProfileDraft) {
       start_year: toNullableNumber(item.start_year),
       end_month: item.is_current ? null : toNullableNumber(item.end_month),
       end_year: item.is_current ? null : toNullableNumber(item.end_year),
+      display_order: index,
+    })),
+    certifications: profile.certifications.map((item, index) => ({
+      ...item,
+      issue_month: toNullableNumber(item.issue_month),
+      issue_year: toNullableNumber(item.issue_year),
+      expiration_month: toNullableNumber(item.expiration_month),
+      expiration_year: toNullableNumber(item.expiration_year),
       display_order: index,
     })),
     achievements: profile.achievements.map((item, index) => ({
@@ -444,6 +610,15 @@ function hydrateDraft(draft: ProfileDraft): ProfileDraft {
       end_year: item.end_year ?? "",
       display_order: index,
     })),
+    certifications: (draft.certifications ?? []).map((item, index) => ({
+      ...emptyCertification(index),
+      ...item,
+      issue_month: item.issue_month ?? "",
+      issue_year: item.issue_year ?? "",
+      expiration_month: item.expiration_month ?? "",
+      expiration_year: item.expiration_year ?? "",
+      display_order: index,
+    })),
     achievements: (draft.achievements ?? []).map((item, index) => ({
       ...emptyAchievement(index),
       ...item,
@@ -474,9 +649,11 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
     projects: [],
     skills: [],
     education: [],
+    certifications: [],
     achievements: [],
     personal_topics: [],
     published_version: null,
+    candidate_version: null,
     has_published_snapshot: false,
   });
   const [account, setAccount] = useState<AccountDetails>({
@@ -486,14 +663,18 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
     timezone: "America/New_York",
   });
   const [published, setPublished] = useState<PublishedSnapshot | null>(null);
+  const [versions, setVersions] = useState<ProfileVersion[]>([]);
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
   const [indexing, setIndexing] = useState(false);
+  const [activatingVersion, setActivatingVersion] = useState<number | null>(null);
   const [question, setQuestion] = useState("What backend experience does this profile show?");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<AskResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [importingResume, setImportingResume] = useState(false);
+  const [resumeImport, setResumeImport] = useState<ResumeImportSummary | null>(null);
   const [status, setStatus] = useState("");
   const [issues, setIssues] = useState<ApiIssue[]>([]);
 
@@ -507,13 +688,12 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
   }
 
   async function api(path: string, init: RequestInit = {}) {
+    const headers = new Headers(init.headers);
+    headers.set("X-API-Key", config.apiKey);
+    if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
     const res = await fetch(`${config.baseUrl}${path}`, {
       ...init,
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": config.apiKey,
-        ...(init.headers ?? {}),
-      },
+      headers,
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -527,19 +707,29 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
     setStatus("");
     try {
       setProfile(hydrateDraft((await api("/api/v1/profile")) as ProfileDraft));
-      try {
-        setPublished((await api("/api/v1/profile/published-snapshot")) as PublishedSnapshot);
-      } catch {
-        setPublished(null);
-      }
-      try {
-        setIndexStatus((await api("/api/v1/profile/index-status")) as IndexStatus);
-      } catch {
-        setIndexStatus(null);
-      }
+      await refreshPublicationState();
     } finally {
       setLoading(false);
     }
+  }
+
+  async function optionalApi<T>(path: string): Promise<T | null> {
+    try {
+      return (await api(path)) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshPublicationState() {
+    const [active, currentIndex, history] = await Promise.all([
+      optionalApi<PublishedSnapshot>("/api/v1/profile/published-snapshot"),
+      optionalApi<IndexStatus>("/api/v1/profile/index-status"),
+      optionalApi<ProfileVersion[]>("/api/v1/profile/versions"),
+    ]);
+    setPublished(active);
+    setIndexStatus(currentIndex);
+    setVersions(history ?? []);
   }
 
   async function indexPublishedProfile() {
@@ -549,12 +739,42 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
     try {
       const indexed = (await api("/api/v1/profile/index", { method: "POST" })) as IndexResponse;
       setIndexStatus(indexed);
-      setStatus(`Indexed published profile version ${indexed.indexed_version}.`);
+      await refreshPublicationState();
+      setProfile((current) => ({
+        ...current,
+        published_version: indexed.published_version,
+        candidate_version: indexed.candidate_version,
+        has_published_snapshot: indexed.published_version !== null,
+      }));
+      setStatus(`Activated profile version ${indexed.indexed_version}.`);
     } catch (err) {
       const maybeError = err as { body?: { detail?: string } };
       setStatus(maybeError.body?.detail || "Indexing failed.");
     } finally {
       setIndexing(false);
+    }
+  }
+
+  async function activateProfileVersion(version: number) {
+    setActivatingVersion(version);
+    setStatus("");
+    try {
+      const indexed = (await api(`/api/v1/profile/versions/${version}/activate`, {
+        method: "POST",
+      })) as IndexResponse;
+      await refreshPublicationState();
+      setProfile((current) => ({
+        ...current,
+        published_version: indexed.published_version,
+        candidate_version: indexed.candidate_version,
+        has_published_snapshot: true,
+      }));
+      setStatus(`Activated profile version ${version}.`);
+    } catch (err) {
+      const maybeError = err as { body?: { detail?: string } };
+      setStatus(maybeError.body?.detail || "Activation failed.");
+    } finally {
+      setActivatingVersion(null);
     }
   }
 
@@ -572,6 +792,47 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
       setStatus(maybeError.body?.detail || "Question failed.");
     } finally {
       setAsking(false);
+    }
+  }
+
+  async function importResume(file: File) {
+    setImportingResume(true);
+    setResumeImport(null);
+    setStatus("");
+    setIssues([]);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const imported = (await api("/api/v1/profile/import-resume", {
+        method: "POST",
+        body,
+      })) as ResumeImportResponse;
+      const hydratedImport = hydrateDraft({
+        ...profile,
+        ...imported.profile,
+        owner_id: profile.owner_id,
+        personal_topics: [],
+        published_version: null,
+        candidate_version: null,
+        has_published_snapshot: false,
+      });
+      const merged = mergeImportedProfile(profile, hydratedImport);
+      setProfile(merged.profile);
+      setResumeImport({
+        filename: imported.filename,
+        added: merged.added,
+        duplicates: merged.duplicates,
+        generated: imported.generated_fields.length,
+        warnings: imported.warnings,
+      });
+      setStatus(`Added ${merged.added} resume record(s); ${merged.duplicates} matching record(s) merged.`);
+    } catch (err) {
+      const maybeError = err as { body?: { detail?: string } };
+      const message = maybeError.body?.detail || "Resume import failed.";
+      setIssues([{ field: "resume", message }]);
+      setStatus(message);
+    } finally {
+      setImportingResume(false);
     }
   }
 
@@ -647,14 +908,20 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
     try {
       await saveDraft();
       const snapshot = (await api("/api/v1/profile/publish", { method: "POST" })) as PublishedSnapshot;
-      setPublished(snapshot);
       setProfile((current) => ({
         ...current,
-        published_version: snapshot.version,
-        has_published_snapshot: true,
+        candidate_version: snapshot.publication_status === "candidate" ? snapshot.version : null,
+        published_version: snapshot.is_active ? snapshot.version : current.published_version,
+        has_published_snapshot: snapshot.is_active || current.has_published_snapshot,
       }));
-      setStatus(`Published version ${snapshot.version}.`);
-      navigate("preview");
+      await refreshPublicationState();
+      if (snapshot.is_active) {
+        setStatus(`Version ${snapshot.version} is already active; no duplicate was created.`);
+        navigate("preview");
+      } else {
+        setStatus(`Candidate version ${snapshot.version} is ready to index and activate.`);
+        navigate("indexing");
+      }
     } catch (err) {
       const maybeError = err as { body?: { detail?: { issues?: ApiIssue[] } } };
       const apiIssues = maybeError.body?.detail?.issues;
@@ -708,6 +975,9 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
             errors={errors}
             saving={saving}
             publishing={publishing}
+            importingResume={importingResume}
+            resumeImport={resumeImport}
+            importResume={importResume}
             saveDraft={saveDraft}
             publishProfile={publishProfile}
             setProfile={setProfile}
@@ -719,7 +989,13 @@ export function Dashboard({ config }: { config: DashboardConfig }) {
         )}
 
         {activeView === "preview" && (
-          <PublishedProfileView published={published} navigate={navigate} />
+          <PublishedProfileView
+            published={published}
+            versions={versions}
+            activatingVersion={activatingVersion}
+            activateProfileVersion={activateProfileVersion}
+            navigate={navigate}
+          />
         )}
 
         {activeView === "indexing" && (
@@ -762,7 +1038,11 @@ function HomeView({
 }) {
   const totalRecords = sectionCount(profile);
   const indexingLabel = indexStatus?.indexed_version ? `v${indexStatus.indexed_version}` : "Not indexed";
-  const indexingDetail = indexStatus?.is_stale ? "Published profile changed; re-index needed" : "Ready for evidenced Q&A";
+  const indexingDetail = indexStatus?.candidate_version
+    ? `Candidate v${indexStatus.candidate_version} is awaiting activation`
+    : indexStatus?.is_stale
+      ? "Active profile needs to be re-indexed"
+      : "Ready for evidenced Q&A";
   return (
     <>
       <header className="dashboard-header">
@@ -781,7 +1061,7 @@ function HomeView({
         <MetricCard label="Profile completeness" value={`${completion}%`} detail={`${missingItems.length} gaps remaining`} />
         <MetricCard label="Published profile" value={published ? `v${published.version}` : "Not published"} detail={published ? new Date(published.published_at).toLocaleString() : "Publish after required fields are complete"} />
         <MetricCard label="Canonical records" value={String(totalRecords)} detail="Draft profile sections" />
-        <MetricCard label="Indexing status" value={indexingLabel} detail={indexStatus?.indexed_version ? indexingDetail : "Index published profile next"} />
+        <MetricCard label="Indexing status" value={indexingLabel} detail={indexStatus?.candidate_version || indexStatus?.indexed_version ? indexingDetail : "Create and activate a candidate next"} />
       </section>
 
       <section className="grid two">
@@ -814,6 +1094,9 @@ function ProfileBuilderView({
   errors,
   saving,
   publishing,
+  importingResume,
+  resumeImport,
+  importResume,
   saveDraft,
   publishProfile,
   setProfile,
@@ -826,6 +1109,9 @@ function ProfileBuilderView({
   errors: Record<string, string>;
   saving: boolean;
   publishing: boolean;
+  importingResume: boolean;
+  resumeImport: ResumeImportSummary | null;
+  importResume: (file: File) => Promise<void>;
   saveDraft: () => Promise<void>;
   publishProfile: () => Promise<void>;
   setProfile: React.Dispatch<React.SetStateAction<ProfileDraft>>;
@@ -865,13 +1151,52 @@ function ProfileBuilderView({
         <div>
           <p className="eyebrow">Canonical profile</p>
           <h1>Profile builder</h1>
-          <p className="muted">Edit the canonical draft. Publishing freezes a stable snapshot for future indexing.</p>
+          <p className="muted">Edit the canonical draft. Publishing creates a stable candidate to index and activate.</p>
         </div>
         <div className="header-actions">
           <button onClick={saveDraft} disabled={saving || publishing} type="button">{saving ? "Saving…" : "Save draft"}</button>
           <button className="primary" onClick={publishProfile} disabled={saving || publishing} type="button">{publishing ? "Publishing…" : "Publish"}</button>
         </div>
       </header>
+
+      <section className="resume-import">
+        <div className="resume-import-header">
+          <div className="resume-import-copy">
+            <h2>Import resume</h2>
+            <p className="muted">PDF or DOCX records are added to this draft for review.</p>
+          </div>
+          <label className={`resume-upload-button${importingResume ? " loading" : ""}`}>
+            {importingResume ? <LoaderCircle className="resume-spinner" aria-hidden="true" /> : <FileUp aria-hidden="true" />}
+            <span>{importingResume ? "Ingesting resume" : "Choose resume"}</span>
+            <input
+              type="file"
+              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              disabled={importingResume}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void importResume(file);
+                event.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+        {importingResume && (
+          <div className="resume-import-progress" role="status" aria-live="polite">
+            <LoaderCircle className="resume-spinner" aria-hidden="true" />
+            <div>
+              <strong>Extracting resume records</strong>
+              <span>Reading the document and preparing reviewable profile fields.</span>
+            </div>
+          </div>
+        )}
+        {resumeImport && (
+          <div className="resume-import-result">
+            <strong>{resumeImport.filename}</strong>
+            <span>{resumeImport.added} added · {resumeImport.duplicates} matches merged · {resumeImport.generated} AI-generated outcomes</span>
+            {resumeImport.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+          </div>
+        )}
+      </section>
 
       <section className="card">
         <label className="field">
@@ -894,7 +1219,7 @@ function ProfileBuilderView({
                   <Field label="Role" value={exp.role} error={errors[`experiences.${index}.role`]} onChange={(value) => updateItem("experiences", index, { role: value })} />
                 </div>
                 <DateFields prefix={`experiences.${index}`} item={exp} errors={errors} onChange={(patch) => updateItem("experiences", index, patch)} />
-                <TextArea label="Summary" value={exp.summary} error={errors[`experiences.${index}.summary`]} onChange={(value) => updateItem("experiences", index, { summary: value })} />
+                <TextArea large label="Resume description" value={exp.summary} error={errors[`experiences.${index}.summary`]} onChange={(value) => updateItem("experiences", index, { summary: value })} />
                 <TextArea label="Outcome (optional)" value={exp.outcome} error={errors[`experiences.${index}.outcome`]} onChange={(value) => updateItem("experiences", index, { outcome: value })} />
               </>
             )}
@@ -912,7 +1237,8 @@ function ProfileBuilderView({
             {!collapsed && (
               <>
                 <Field label="Project name" value={project.name} error={errors[`projects.${index}.name`]} onChange={(value) => updateItem("projects", index, { name: value })} />
-                <DateFields prefix={`projects.${index}`} item={project} errors={errors} onChange={(patch) => updateItem("projects", index, patch)} />
+                <DateFields optional prefix={`projects.${index}`} item={project} errors={errors} onChange={(patch) => updateItem("projects", index, patch)} />
+                <TextArea large label="Resume description" value={project.summary} error={errors[`projects.${index}.summary`]} onChange={(value) => updateItem("projects", index, { summary: value })} />
                 <TextArea label="Problem" value={project.problem} error={errors[`projects.${index}.problem`]} onChange={(value) => updateItem("projects", index, { problem: value })} />
                 <TextArea label="Contribution" value={project.contribution} error={errors[`projects.${index}.contribution`]} onChange={(value) => updateItem("projects", index, { contribution: value })} />
                 <TextArea label="Outcome (optional)" value={project.outcome} error={errors[`projects.${index}.outcome`]} onChange={(value) => updateItem("projects", index, { outcome: value })} />
@@ -984,6 +1310,57 @@ function ProfileBuilderView({
       })}
       {profile.education.length > 0 && <CardAddButton label="Add another education record" onClick={() => addSectionItem("education")} />}
 
+      <SectionHeading title="Certifications" description="Credentials, issuers, dates, and resume-grounded evidence." onAdd={() => addSectionItem("certifications")} />
+      {profile.certifications.map((item, index) => {
+        const collapsed = isCollapsed("certifications", item, index);
+        return (
+          <DraggableCard key={item.id ?? `certification-${index}`} {...dragProps("certifications", index)}>
+            <Toolbar title={`Certification ${index + 1}`} subtitle={`${item.name || "Untitled certification"}${item.issuer ? ` · ${item.issuer}` : ""}`} section="certifications" index={index} count={profile.certifications.length} reorder={reorder} remove={removeItem} collapsed={collapsed} onToggle={() => toggleCard("certifications", item, index)} />
+            {!collapsed && (
+              <>
+                <div className="grid two">
+                  <Field label="Certification name" value={item.name} error={errors[`certifications.${index}.name`]} onChange={(value) => updateItem("certifications", index, { name: value })} />
+                  <Field label="Issuer" value={item.issuer} error={errors[`certifications.${index}.issuer`]} onChange={(value) => updateItem("certifications", index, { issuer: value })} />
+                </div>
+                <div className="grid two">
+                  <label className="field">
+                    <span>Issue date</span>
+                    <input
+                      type="month"
+                      min="1900-01"
+                      value={toMonthValue(item.issue_month, item.issue_year)}
+                      onChange={(event) => {
+                        const date = monthValuePatch(event.target.value);
+                        updateItem("certifications", index, { issue_month: date.month, issue_year: date.year });
+                      }}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Expiration date</span>
+                    <input
+                      type="month"
+                      min="1900-01"
+                      value={toMonthValue(item.expiration_month, item.expiration_year)}
+                      onChange={(event) => {
+                        const date = monthValuePatch(event.target.value);
+                        updateItem("certifications", index, { expiration_month: date.month, expiration_year: date.year });
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="grid two">
+                  <Field label="Credential ID" value={item.credential_id} onChange={(value) => updateItem("certifications", index, { credential_id: value })} />
+                  <Field label="Credential URL" value={item.credential_url} onChange={(value) => updateItem("certifications", index, { credential_url: value })} />
+                </div>
+                <TextArea label="Summary" value={item.summary} onChange={(value) => updateItem("certifications", index, { summary: value })} />
+                <TextArea label="Evidence" value={item.evidence} onChange={(value) => updateItem("certifications", index, { evidence: value })} />
+              </>
+            )}
+          </DraggableCard>
+        );
+      })}
+      {profile.certifications.length > 0 && <CardAddButton label="Add another certification" onClick={() => addSectionItem("certifications")} />}
+
       <SectionHeading title="Achievements" description="Awards, launches, recognitions, or notable wins." onAdd={() => addSectionItem("achievements")} />
       {profile.achievements.map((item, index) => {
         const collapsed = isCollapsed("achievements", item, index);
@@ -1036,17 +1413,36 @@ function ProfileBuilderView({
   );
 }
 
-function PublishedProfileView({ published, navigate }: { published: PublishedSnapshot | null; navigate: (view: ViewName) => void }) {
+function PublishedProfileView({
+  published,
+  versions,
+  activatingVersion,
+  activateProfileVersion,
+  navigate,
+}: {
+  published: PublishedSnapshot | null;
+  versions: ProfileVersion[];
+  activatingVersion: number | null;
+  activateProfileVersion: (version: number) => Promise<void>;
+  navigate: (view: ViewName) => void;
+}) {
   if (!published) {
+    const candidate = versions.find((version) => version.publication_status === "candidate");
     return (
       <>
         <header className="dashboard-header">
           <div>
             <p className="eyebrow">Published profile</p>
-            <h1>No published profile yet</h1>
-            <p className="muted">Publish the canonical profile to create the stable snapshot preview.</p>
+            <h1>{candidate ? `Candidate v${candidate.version} is awaiting activation` : "No published profile yet"}</h1>
+            <p className="muted">
+              {candidate
+                ? "Index and activate the candidate before it becomes visible to visitors."
+                : "Publish the canonical profile to create a stable candidate."}
+            </p>
           </div>
-          <button className="primary" type="button" onClick={() => navigate("profile")}>Go to profile builder</button>
+          <button className="primary" type="button" onClick={() => navigate(candidate ? "indexing" : "profile")}>
+            {candidate ? "Go to indexing" : "Go to profile builder"}
+          </button>
         </header>
       </>
     );
@@ -1083,8 +1479,7 @@ function PublishedProfileView({ published, navigate }: { published: PublishedSna
         <PreviewSection title="Featured projects">
           {(snapshot.projects ?? []).map((item) => (
             <PreviewItem key={item.id} title={item.name} meta={dateRange(item)}>
-              <p>{item.problem}</p>
-              <p>{item.contribution}</p>
+              <p>{item.summary || [item.problem, item.contribution].filter(Boolean).join(" ")}</p>
               <p className="outcome">Outcome: {item.outcome}</p>
               {item.technologies?.length ? <div className="tag-row">{item.technologies.map((tech) => <span key={tech}>{tech}</span>)}</div> : null}
             </PreviewItem>
@@ -1111,6 +1506,19 @@ function PublishedProfileView({ published, navigate }: { published: PublishedSna
           ))}
         </PreviewSection>
 
+        <PreviewSection title="Certifications">
+          {(snapshot.certifications ?? []).map((item) => (
+            <PreviewItem
+              key={item.id}
+              title={item.name}
+              meta={[item.issuer, toMonthValue(item.issue_month, item.issue_year)].filter(Boolean).join(" · ")}
+            >
+              {item.summary && <p>{item.summary}</p>}
+              {item.evidence && <p className="outcome">Evidence: {item.evidence}</p>}
+            </PreviewItem>
+          ))}
+        </PreviewSection>
+
         <PreviewSection title="Achievements">
           {(snapshot.achievements ?? []).map((item) => (
             <PreviewItem key={item.id} title={item.title} meta={item.year ? `${item.month || ""}/${item.year}` : undefined}>
@@ -1133,6 +1541,34 @@ function PublishedProfileView({ published, navigate }: { published: PublishedSna
         <summary>View raw snapshot JSON</summary>
         <pre>{JSON.stringify(snapshot, null, 2)}</pre>
       </details>
+
+      <section className="card version-history">
+        <h2>Version history</h2>
+        <p className="muted">Activating an older version rebuilds its index before switching visitor traffic.</p>
+        <div className="version-list">
+          {versions.map((version) => (
+            <div className="version-row" key={version.version}>
+              <div>
+                <strong>Version {version.version}</strong>
+                <span>{version.publication_status} · {new Date(version.published_at).toLocaleString()}</span>
+              </div>
+              {!version.is_active && (
+                <button
+                  type="button"
+                  disabled={activatingVersion !== null}
+                  onClick={() => activateProfileVersion(version.version)}
+                >
+                  {activatingVersion === version.version
+                    ? "Activating…"
+                    : version.publication_status === "candidate"
+                      ? "Index and activate"
+                      : "Roll back"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
     </>
   );
 }
@@ -1160,7 +1596,9 @@ function IndexingView({
   askIndexedProfile: () => Promise<void>;
   navigate: (view: ViewName) => void;
 }) {
-  const canAsk = Boolean(indexStatus?.indexed_version && !indexStatus.is_stale);
+  const canAsk = Boolean(indexStatus?.published_version && indexStatus?.indexed_version && !indexStatus.is_stale);
+  const candidateVersion = indexStatus?.candidate_version;
+  const canIndex = Boolean(candidateVersion || published);
 
   return (
     <>
@@ -1168,24 +1606,28 @@ function IndexingView({
         <div>
           <p className="eyebrow">Retrieval pipeline</p>
           <h1>Indexing</h1>
-          <p className="muted">Index the active published profile snapshot with pgvector, then test one evidenced answer.</p>
+          <p className="muted">Build the candidate index, then atomically activate it for visitor answers.</p>
         </div>
         <div className="header-actions">
           <button type="button" onClick={() => navigate("preview")}>View published profile</button>
-          <button className="primary" type="button" onClick={indexPublishedProfile} disabled={indexing || !published}>
-            {indexing ? "Indexing…" : indexStatus?.is_stale ? "Re-index published profile" : "Index published profile"}
+          <button className="primary" type="button" onClick={indexPublishedProfile} disabled={indexing || !canIndex}>
+            {indexing
+              ? "Indexing…"
+              : candidateVersion
+                ? `Index and activate v${candidateVersion}`
+                : "Re-index active profile"}
           </button>
         </div>
       </header>
 
       <section className="metric-grid">
-        <MetricCard label="Published version" value={published ? `v${published.version}` : "None"} detail={published ? new Date(published.published_at).toLocaleString() : "Publish a profile first"} />
+        <MetricCard label="Active version" value={published ? `v${published.version}` : "None"} detail={candidateVersion ? `Candidate v${candidateVersion} is waiting` : published ? new Date(published.published_at).toLocaleString() : "Publish a profile first"} />
         <MetricCard label="Indexed version" value={indexStatus?.indexed_version ? `v${indexStatus.indexed_version}` : "None"} detail={indexStatus?.is_stale ? "Stale; re-index required" : "Matches latest indexed snapshot"} />
         <MetricCard label="Chunks" value={String(indexStatus?.chunk_count ?? 0)} detail="Structured profile chunks" />
         <MetricCard label="Last indexed" value={indexStatus?.indexed_at ? new Date(indexStatus.indexed_at).toLocaleDateString() : "Never"} detail={indexStatus?.indexed_at ? new Date(indexStatus.indexed_at).toLocaleTimeString() : "No index yet"} />
       </section>
 
-      {!published && (
+      {!published && !candidateVersion && (
         <section className="card">
           <h2>No published snapshot</h2>
           <p className="muted">Create and publish the profile before indexing.</p>
@@ -1203,14 +1645,14 @@ function IndexingView({
         <button className="primary" type="button" onClick={askIndexedProfile} disabled={!canAsk || asking}>
           {asking ? "Asking…" : "Ask indexed profile"}
         </button>
-        {!canAsk && <p className="field-error">Index the current published profile before asking.</p>}
+        {!canAsk && <p className="field-error">Activate a published profile before asking.</p>}
 
         {answer && (
           <div className="answer-panel">
             <h3>Answer</h3>
             <p>{answer.answer}</p>
             <p className="muted">
-              {answer.status} · Snapshot v{answer.snapshot_version} · {answer.knowledge_backend}
+              {answer.status} · {answer.evidence.length} evidence item{answer.evidence.length === 1 ? "" : "s"} · Snapshot v{answer.snapshot_version} · {answer.knowledge_backend} {answer.knowledge_backend_version}
             </p>
             <h3>Evidence</h3>
             <div className="evidence-list">
@@ -1270,18 +1712,20 @@ function DateFields({
   item,
   onChange,
   errors,
+  optional = false,
 }: {
   prefix: string;
   item: { start_month: NumberField; start_year: NumberField; end_month: NumberField; end_year: NumberField; is_current: boolean };
   onChange: (patch: Partial<typeof item>) => void;
   errors: Record<string, string>;
+  optional?: boolean;
 }) {
   const hasBackwardsRange = isDateRangeBackwards(item);
   return (
     <>
       <div className="grid two">
         <label className="field">
-          <span>Start date</span>
+          <span>{optional ? "Start date (optional)" : "Start date"}</span>
           <input
             type="month"
             min="1900-01"
@@ -1294,7 +1738,7 @@ function DateFields({
           />
         </label>
         <label className="field">
-          <span>End date</span>
+          <span>{optional ? "End date (optional)" : "End date"}</span>
           <input
             type="month"
             min="1900-01"
@@ -1458,11 +1902,11 @@ function Field({ label, value, error, onChange }: { label: string; value: string
   );
 }
 
-function TextArea({ label, value, error, onChange }: { label: string; value: string; error?: string; onChange: (value: string) => void }) {
+function TextArea({ label, value, error, large = false, onChange }: { label: string; value: string; error?: string; large?: boolean; onChange: (value: string) => void }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} />
+      <textarea className={large ? "large" : undefined} value={value} onChange={(e) => onChange(e.target.value)} />
       {error && <em>{error}</em>}
     </label>
   );

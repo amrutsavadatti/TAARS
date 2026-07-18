@@ -24,11 +24,21 @@ Error handling:
 from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, TypeVar
+
+from pydantic import BaseModel
 
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
+
+
+def _require_api_key() -> None:
+    if not settings.llm_api_key or settings.llm_api_key.startswith("sk-..."):
+        raise ValueError(
+            "LLM_API_KEY is not set in .env. Add your OpenAI or Anthropic key."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -131,10 +141,7 @@ async def stream_response(
     Yields:
         str — one token at a time (e.g. "Amrut", " worked", " at", ...)
     """
-    if not settings.llm_api_key or settings.llm_api_key.startswith("sk-..."):
-        raise ValueError(
-            "LLM_API_KEY is not set in .env. Add your OpenAI or Anthropic key."
-        )
+    _require_api_key()
 
     provider = settings.llm_provider.lower()
 
@@ -163,3 +170,93 @@ async def stream_response(
         yield "\n\n[Sorry, I encountered an error generating a response. "
         yield f"Please try again or contact {settings.owner_name} directly "
         yield f"at {settings.owner_contact_email}.]"
+
+
+async def complete_json_response(
+    system_prompt: str,
+    user_message: str,
+    *,
+    max_tokens: int = 4_000,
+) -> str:
+    """Return one provider-neutral, non-streaming JSON response."""
+    _require_api_key()
+    provider = settings.llm_provider.lower()
+
+    if provider == "openai":
+        from openai import AsyncOpenAI
+
+        response = await AsyncOpenAI(api_key=settings.llm_api_key).chat.completions.create(
+            model=settings.llm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or "{}"
+
+    if provider == "anthropic":
+        import anthropic
+
+        response = await anthropic.AsyncAnthropic(api_key=settings.llm_api_key).messages.create(
+            model=settings.llm_model,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+        return "".join(block.text for block in response.content if block.type == "text")
+
+    raise ValueError(f"Unknown LLM_PROVIDER '{provider}'. Use 'openai' or 'anthropic'.")
+
+
+async def complete_structured_response(
+    system_prompt: str,
+    user_message: str,
+    response_model: type[StructuredResponse],
+    *,
+    max_tokens: int = 4_000,
+) -> StructuredResponse:
+    """Generate and validate one provider-neutral Pydantic response."""
+    _require_api_key()
+    provider = settings.llm_provider.lower()
+
+    if provider == "openai":
+        from openai import AsyncOpenAI, ContentFilterFinishReasonError, LengthFinishReasonError
+
+        try:
+            response = await AsyncOpenAI(api_key=settings.llm_api_key).beta.chat.completions.parse(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                response_format=response_model,
+                temperature=0,
+                max_tokens=max_tokens,
+            )
+        except LengthFinishReasonError as exc:
+            raise ValueError("The model response was truncated. Try a shorter resume.") from exc
+        except ContentFilterFinishReasonError as exc:
+            raise ValueError("The model could not process this resume.") from exc
+
+        message = response.choices[0].message
+        if message.parsed is None:
+            raise ValueError(message.refusal or "The model did not return a structured profile.")
+        return message.parsed
+
+    if provider == "anthropic":
+        raw = await complete_json_response(
+            system_prompt,
+            user_message,
+            max_tokens=max_tokens,
+        )
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end < start:
+            raise ValueError("The model did not return a structured profile.")
+        return response_model.model_validate_json(raw[start : end + 1])
+
+    raise ValueError(f"Unknown LLM_PROVIDER '{provider}'. Use 'openai' or 'anthropic'.")

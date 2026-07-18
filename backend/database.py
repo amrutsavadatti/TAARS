@@ -48,7 +48,14 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession,
 )
 
-_PROFILE_DRAFT_JSON_COLUMNS = ("projects", "skills", "education", "achievements", "personal_topics")
+_PROFILE_DRAFT_JSON_COLUMNS = (
+    "projects",
+    "skills",
+    "education",
+    "certifications",
+    "achievements",
+    "personal_topics",
+)
 _MESSAGE_PROVENANCE_COLUMNS = {
     "answer_status": "VARCHAR",
     "profile_snapshot_version": "INTEGER",
@@ -56,6 +63,10 @@ _MESSAGE_PROVENANCE_COLUMNS = {
     "knowledge_backend_version": "VARCHAR",
 }
 _PROFILE_INDEX_STATE_COLUMNS = {"backend_version": "VARCHAR"}
+_PUBLISHED_SNAPSHOT_COLUMNS = {
+    "publication_status": "VARCHAR",
+    "activated_at": "TIMESTAMP WITH TIME ZONE",
+}
 
 
 def _add_missing_profile_draft_columns(sync_conn) -> None:
@@ -114,6 +125,26 @@ def _add_missing_index_state_columns(sync_conn) -> None:
             sync_conn.execute(text(f"ALTER TABLE profile_index_states ADD COLUMN {column} {column_type}"))
 
 
+def _add_missing_snapshot_columns(sync_conn) -> None:
+    inspector = inspect(sync_conn)
+    if "published_profile_snapshots" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("published_profile_snapshots")}
+    for column, column_type in _PUBLISHED_SNAPSHOT_COLUMNS.items():
+        if column in existing_columns:
+            continue
+        resolved_type = "DATETIME" if column == "activated_at" and sync_conn.dialect.name == "sqlite" else column_type
+        sync_conn.execute(text(f"ALTER TABLE published_profile_snapshots ADD COLUMN {column} {resolved_type}"))
+
+    sync_conn.execute(
+        text(
+            "UPDATE published_profile_snapshots "
+            "SET publication_status = CASE WHEN is_active THEN 'active' ELSE 'superseded' END "
+            "WHERE publication_status IS NULL"
+        )
+    )
+
+
 async def create_tables() -> None:
     """Create all tables if they don't exist. Safe to call on every startup."""
     import backend.models  # noqa: F401 — populates Base.metadata
@@ -123,6 +154,7 @@ async def create_tables() -> None:
         await conn.run_sync(_add_missing_profile_draft_columns)
         await conn.run_sync(_add_missing_message_columns)
         await conn.run_sync(_add_missing_index_state_columns)
+        await conn.run_sync(_add_missing_snapshot_columns)
         await conn.run_sync(_ensure_pgvector)
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import ProfileDraft, PublishedProfileSnapshot
 from backend.profile_schemas import (
     AchievementInput,
+    CertificationInput,
     EducationInput,
     ExperienceInput,
     PersonalTopicInput,
@@ -19,6 +20,18 @@ from backend.profile_schemas import (
     ProjectInput,
     SkillInput,
     ValidationIssue,
+)
+
+
+PROFILE_CONTENT_FIELDS = (
+    "owner_name",
+    "experiences",
+    "projects",
+    "skills",
+    "education",
+    "certifications",
+    "achievements",
+    "personal_topics",
 )
 
 
@@ -36,6 +49,15 @@ def _sort_key(item: dict[str, Any]) -> tuple[int, str]:
 
 def _stable_id(value: str | None, prefix: str) -> str:
     return _clean(value) or f"{prefix}_{uuid.uuid4().hex}"
+
+
+def _has_same_profile_content(
+    existing: PublishedProfileSnapshot, candidate: dict[str, Any]
+) -> bool:
+    return all(
+        existing.snapshot.get(field) == candidate.get(field)
+        for field in PROFILE_CONTENT_FIELDS
+    )
 
 
 def normalize_experiences(experiences: list[ExperienceInput]) -> list[dict[str, Any]]:
@@ -68,6 +90,7 @@ def normalize_projects(projects: list[ProjectInput]) -> list[dict[str, Any]]:
                 "id": _stable_id(project.id, "proj"),
                 "type": "project",
                 "name": _clean(project.name),
+                "summary": _clean(project.summary),
                 "problem": _clean(project.problem),
                 "contribution": _clean(project.contribution),
                 "outcome": _clean(project.outcome),
@@ -148,6 +171,29 @@ def normalize_achievements(achievements: list[AchievementInput]) -> list[dict[st
     return sorted(normalized, key=_sort_key)
 
 
+def normalize_certifications(certifications: list[CertificationInput]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(certifications):
+        normalized.append(
+            {
+                "id": _stable_id(item.id, "cert"),
+                "type": "certification",
+                "name": _clean(item.name),
+                "issuer": _clean(item.issuer),
+                "issue_month": item.issue_month,
+                "issue_year": item.issue_year,
+                "expiration_month": item.expiration_month,
+                "expiration_year": item.expiration_year,
+                "credential_id": _clean(item.credential_id),
+                "credential_url": _clean(item.credential_url),
+                "summary": _clean(item.summary),
+                "evidence": _clean(item.evidence),
+                "display_order": item.display_order if item.display_order is not None else index,
+            }
+        )
+    return sorted(normalized, key=_sort_key)
+
+
 def normalize_personal_topics(topics: list[PersonalTopicInput]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for index, topic in enumerate(topics):
@@ -177,6 +223,40 @@ async def get_active_snapshot(db: AsyncSession, owner_id: str) -> PublishedProfi
     return result.scalar_one_or_none()
 
 
+async def get_candidate_snapshot(db: AsyncSession, owner_id: str) -> PublishedProfileSnapshot | None:
+    result = await db.execute(
+        select(PublishedProfileSnapshot)
+        .where(
+            PublishedProfileSnapshot.owner_id == owner_id,
+            PublishedProfileSnapshot.publication_status == "candidate",
+        )
+        .order_by(PublishedProfileSnapshot.version.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_snapshot_version(
+    db: AsyncSession, owner_id: str, version: int
+) -> PublishedProfileSnapshot | None:
+    result = await db.execute(
+        select(PublishedProfileSnapshot).where(
+            PublishedProfileSnapshot.owner_id == owner_id,
+            PublishedProfileSnapshot.version == version,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_snapshot_versions(db: AsyncSession, owner_id: str) -> list[PublishedProfileSnapshot]:
+    result = await db.execute(
+        select(PublishedProfileSnapshot)
+        .where(PublishedProfileSnapshot.owner_id == owner_id)
+        .order_by(PublishedProfileSnapshot.version.desc())
+    )
+    return list(result.scalars().all())
+
+
 async def get_draft(db: AsyncSession, owner_id: str) -> ProfileDraft | None:
     result = await db.execute(select(ProfileDraft).where(ProfileDraft.owner_id == owner_id))
     return result.scalar_one_or_none()
@@ -190,6 +270,7 @@ async def save_draft(db: AsyncSession, owner_id: str, body: ProfileDraftInput) -
         "projects": normalize_projects(body.projects),
         "skills": normalize_skills(body.skills),
         "education": normalize_education(body.education),
+        "certifications": normalize_certifications(body.certifications),
         "achievements": normalize_achievements(body.achievements),
         "personal_topics": normalize_personal_topics(body.personal_topics),
     }
@@ -255,11 +336,13 @@ def validate_for_publication(draft: ProfileDraft) -> list[ValidationIssue]:
         prefix = f"projects.{index}"
         if not _clean(project.get("name")):
             issues.append(ValidationIssue(field=f"{prefix}.name", message="Project name is required."))
+        if not _clean(project.get("summary")):
+            issues.append(ValidationIssue(field=f"{prefix}.summary", message="Resume description is required."))
         if not _clean(project.get("problem")):
             issues.append(ValidationIssue(field=f"{prefix}.problem", message="Problem is required."))
         if not _clean(project.get("contribution")):
             issues.append(ValidationIssue(field=f"{prefix}.contribution", message="Contribution is required."))
-        _validate_dates(issues, prefix, project)
+        _validate_dates(issues, prefix, project, require_dates=False)
 
     for index, skill in enumerate(draft.skills):
         prefix = f"skills.{index}"
@@ -280,6 +363,13 @@ def validate_for_publication(draft: ProfileDraft) -> list[ValidationIssue]:
             issues.append(ValidationIssue(field=f"{prefix}.title", message="Title is required."))
         if not _clean(achievement.get("summary")):
             issues.append(ValidationIssue(field=f"{prefix}.summary", message="Summary is required."))
+
+    for index, certification in enumerate(draft.certifications):
+        prefix = f"certifications.{index}"
+        if not _clean(certification.get("name")):
+            issues.append(ValidationIssue(field=f"{prefix}.name", message="Name is required."))
+        if not _clean(certification.get("issuer")):
+            issues.append(ValidationIssue(field=f"{prefix}.issuer", message="Issuer is required."))
 
     for index, topic in enumerate(draft.personal_topics):
         prefix = f"personal_topics.{index}"
@@ -307,6 +397,7 @@ def build_snapshot(
         "projects": sorted(draft.projects, key=_sort_key),
         "skills": sorted(draft.skills, key=_sort_key),
         "education": sorted(draft.education, key=_sort_key),
+        "certifications": sorted(draft.certifications, key=_sort_key),
         "achievements": sorted(draft.achievements, key=_sort_key),
         "personal_topics": [
             topic for topic in sorted(draft.personal_topics, key=_sort_key) if topic.get("approved")
@@ -324,30 +415,60 @@ async def publish_draft(db: AsyncSession, owner_id: str) -> tuple[PublishedProfi
         return None, issues
 
     latest_result = await db.execute(
-        select(PublishedProfileSnapshot.version)
+        select(PublishedProfileSnapshot)
         .where(PublishedProfileSnapshot.owner_id == owner_id)
         .order_by(PublishedProfileSnapshot.version.desc())
         .limit(1)
     )
-    latest_version = latest_result.scalar_one_or_none() or 0
-    next_version = latest_version + 1
+    latest = latest_result.scalar_one_or_none()
+    next_version = (latest.version if latest else 0) + 1
     published_at = datetime.now(timezone.utc)
     snapshot = build_snapshot(owner_id, next_version, draft, published_at)
 
-    await db.execute(
-        update(PublishedProfileSnapshot)
-        .where(PublishedProfileSnapshot.owner_id == owner_id)
-        .values(is_active=False)
-    )
+    existing_candidate = await get_candidate_snapshot(db, owner_id)
+    if existing_candidate and _has_same_profile_content(existing_candidate, snapshot):
+        return existing_candidate, []
+
+    active = await get_active_snapshot(db, owner_id)
+    if active and _has_same_profile_content(active, snapshot):
+        if existing_candidate:
+            existing_candidate.publication_status = "superseded"
+            await db.commit()
+        return active, []
+
+    if existing_candidate:
+        existing_candidate.publication_status = "superseded"
+
     published = PublishedProfileSnapshot(
         id=f"profile_snapshot_{uuid.uuid4().hex}",
         owner_id=owner_id,
         version=next_version,
         snapshot=snapshot,
-        is_active=True,
+        publication_status="candidate",
+        is_active=False,
         published_at=published_at,
     )
     db.add(published)
     await db.commit()
     await db.refresh(published)
     return published, []
+
+
+async def activate_snapshot(
+    db: AsyncSession, snapshot: PublishedProfileSnapshot
+) -> PublishedProfileSnapshot:
+    await db.execute(
+        update(PublishedProfileSnapshot)
+        .where(
+            PublishedProfileSnapshot.owner_id == snapshot.owner_id,
+            PublishedProfileSnapshot.id != snapshot.id,
+            PublishedProfileSnapshot.publication_status.in_(("active", "candidate")),
+        )
+        .values(is_active=False, publication_status="superseded")
+    )
+
+    snapshot.is_active = True
+    snapshot.publication_status = "active"
+    snapshot.activated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return snapshot

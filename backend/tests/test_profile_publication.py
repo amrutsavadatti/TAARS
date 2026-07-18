@@ -55,14 +55,11 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
             "projects": [
                 {
                     "name": "Career assistant",
+                    "summary": "Built the profile publication workflow for a career assistant.",
                     "problem": "Visitors needed better answers about the owner's background.",
                     "contribution": "Built the profile publication workflow.",
                     "outcome": "",
                     "technologies": ["FastAPI", "React", "PostgreSQL"],
-                    "start_month": 2,
-                    "start_year": 2024,
-                    "end_month": 1,
-                    "end_year": 2024,
                     "display_order": 0,
                 }
             ],
@@ -78,7 +75,8 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
         assert publish_blocked.status_code == 422
         issue_fields = {issue["field"] for issue in publish_blocked.json()["detail"]["issues"]}
         assert "experiences.0.end" in issue_fields
-        assert "projects.0.end" in issue_fields
+        assert "projects.0.start" not in issue_fields
+        assert "projects.0.end" not in issue_fields
 
         edited_and_added = {
             "owner_name": "Test Owner",
@@ -111,6 +109,7 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                 {
                     "id": created_project_id,
                     "name": "Career assistant",
+                    "summary": "Built the canonical profile workflow, including editing, validation, and publication.",
                     "problem": "Visitors needed better answers about the owner's background.",
                     "contribution": "Built a canonical profile publication workflow.",
                     "outcome": "Created a stable profile snapshot for future indexing.",
@@ -213,6 +212,8 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
         assert published.status_code == 200
         published_body = published.json()
         assert published_body["version"] == 1
+        assert published_body["publication_status"] == "candidate"
+        assert published_body["is_active"] is False
         snapshot = published_body["snapshot"]
         assert snapshot["schema_version"] == "profile.snapshot.v1"
         assert snapshot["owner_id"] == "test_owner"
@@ -236,6 +237,7 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
             "id": created_project_id,
             "type": "project",
             "name": "Career assistant",
+            "summary": "Built the canonical profile workflow, including editing, validation, and publication.",
             "problem": "Visitors needed better answers about the owner's background.",
             "contribution": "Built a canonical profile publication workflow.",
             "outcome": "Created a stable profile snapshot for future indexing.",
@@ -265,6 +267,18 @@ async def test_profile_draft_publication_snapshot_and_reload_lifecycle(tmp_path,
                 "display_order": 0,
             }
         ]
+
+        duplicate_publish = await client.post("/api/v1/profile/publish", headers=headers)
+        assert duplicate_publish.status_code == 200
+        assert duplicate_publish.json()["version"] == 1
+
+        not_active_yet = await client.get("/api/v1/profile/published-snapshot", headers=headers)
+        assert not_active_yet.status_code == 404
+
+        activated = await client.post("/api/v1/profile/index", headers=headers)
+        assert activated.status_code == 200
+        assert activated.json()["published_version"] == 1
+        assert activated.json()["candidate_version"] is None
 
         changed_draft_after_publish = {
             "owner_name": "Test Owner",

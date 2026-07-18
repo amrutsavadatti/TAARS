@@ -13,9 +13,10 @@ from typing import Any, Protocol
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.models import ProfileIndexChunk, ProfileIndexState, PublishedProfileSnapshot
 from backend.profile_indexing_schemas import ProfileIndexStatusResponse
-from backend.profile_service import get_active_snapshot
+from backend.profile_service import get_active_snapshot, get_candidate_snapshot
 
 EMBEDDING_DIMENSION = 384
 TOKEN_RE = re.compile(r"[a-zA-Z0-9+#.]+")
@@ -38,6 +39,8 @@ QUERY_ALIASES = {
     "projects": {"project"},
     "experiences": {"experience"},
     "achievements": {"achievement"},
+    "certifications": {"certification", "credential"},
+    "certified": {"certification", "credential"},
     "interests": {"personal_topic"},
 }
 
@@ -77,9 +80,9 @@ class KnowledgeBackend(Protocol):
 
     async def status(self, db: AsyncSession, owner_id: str) -> ProfileIndexStatusResponse: ...
 
-    async def index_active_profile(
-        self, db: AsyncSession, owner_id: str
-    ) -> tuple[ProfileIndexStatusResponse, list[ProfileIndexChunk]]: ...
+    async def index_snapshot(
+        self, db: AsyncSession, snapshot: PublishedProfileSnapshot
+    ) -> list[ProfileIndexChunk]: ...
 
     async def retrieve(
         self, db: AsyncSession, owner_id: str, question: str, *, limit: int = 3
@@ -108,6 +111,49 @@ def embed_text(value: str) -> list[float]:
 
     norm = math.sqrt(sum(component * component for component in vector))
     return [round(component / norm, 8) for component in vector] if norm else vector
+
+
+class EmbeddingProvider(Protocol):
+    name: str
+    dimension: int
+
+    async def embed(self, value: str) -> list[float]: ...
+
+
+class HashEmbeddingProvider:
+    """Deterministic local fallback used when no embedding API key is configured."""
+
+    name = "hash"
+    dimension = EMBEDDING_DIMENSION
+
+    async def embed(self, value: str) -> list[float]:
+        return embed_text(value)
+
+
+class OpenAIEmbeddingProvider:
+    """OpenAI embeddings provider constrained to the pgvector schema dimension."""
+
+    name = "openai"
+    dimension = EMBEDDING_DIMENSION
+
+    async def embed(self, value: str) -> list[float]:
+        from openai import AsyncOpenAI
+
+        try:
+            response = await AsyncOpenAI(api_key=settings.llm_api_key).embeddings.create(
+                model=settings.embedding_model,
+                input=value,
+                dimensions=self.dimension,
+            )
+            return [round(float(component), 8) for component in response.data[0].embedding]
+        except Exception:
+            return await HashEmbeddingProvider().embed(value)
+
+
+def configured_embedding_provider() -> EmbeddingProvider:
+    if settings.embedding_provider == "openai" and settings.llm_api_key and not settings.llm_api_key.startswith("sk-..."):
+        return OpenAIEmbeddingProvider()
+    return HashEmbeddingProvider()
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -172,11 +218,14 @@ def build_profile_chunks(snapshot: dict[str, Any]) -> list[ProfileChunk]:
         if item.get("visibility", "public") != "public":
             continue
         technologies = item.get("technologies", [])
+        description = _clean(item.get("summary")) or _join([
+            _clean(item.get("problem")),
+            _clean(item.get("contribution")),
+        ])
         chunks.append(_chunk(
             "project", item.get("id"), _clean(item.get("name")),
             _join([
-                _clean(item.get("problem")), _clean(item.get("contribution")),
-                _clean(item.get("outcome")), _clean(item.get("measurable_impact")),
+                description, _clean(item.get("outcome")), _clean(item.get("measurable_impact")),
                 " ".join(technologies),
             ]),
             {"date_range": _date_range(item), "technologies": technologies}, _date_range(item),
@@ -201,6 +250,22 @@ def build_profile_chunks(snapshot: dict[str, Any]) -> list[ProfileChunk]:
             "education", item.get("id"), title,
             _join([_clean(item.get("summary")), _clean(item.get("outcome"))]),
             {"date_range": _date_range(item)}, _date_range(item),
+        ))
+
+    for item in snapshot.get("certifications", []):
+        title = _join([
+            _clean(item.get("name")),
+            f"from {_clean(item.get('issuer'))}" if item.get("issuer") else "",
+        ])
+        date = (
+            f"{item.get('issue_month')}/{item.get('issue_year')}"
+            if item.get("issue_month") and item.get("issue_year")
+            else str(item.get("issue_year") or "")
+        )
+        chunks.append(_chunk(
+            "certification", item.get("id"), title,
+            _join([_clean(item.get("summary")), _clean(item.get("evidence"))]),
+            {"issuer": item.get("issuer"), "issue_date": date}, date,
         ))
 
     for item in snapshot.get("achievements", []):
@@ -235,7 +300,13 @@ class PostgresPgvectorKnowledgeBackend:
     """SQLAlchemy adapter with pgvector ranking and a SQLite test fallback."""
 
     name = "postgres_pgvector"
-    version = "profile-hash-384-v2"
+
+    def __init__(self, embedding_provider: EmbeddingProvider | None = None) -> None:
+        self.embedding_provider = embedding_provider or configured_embedding_provider()
+
+    @property
+    def version(self) -> str:
+        return f"profile-{self.embedding_provider.name}-{self.embedding_provider.dimension}-v3"
 
     async def _state(self, db: AsyncSession, owner_id: str) -> ProfileIndexState | None:
         result = await db.execute(select(ProfileIndexState).where(ProfileIndexState.owner_id == owner_id))
@@ -243,10 +314,12 @@ class PostgresPgvectorKnowledgeBackend:
 
     async def status(self, db: AsyncSession, owner_id: str) -> ProfileIndexStatusResponse:
         active = await get_active_snapshot(db, owner_id)
+        candidate = await get_candidate_snapshot(db, owner_id)
         state = await self._state(db, owner_id)
         return ProfileIndexStatusResponse(
             owner_id=owner_id,
             published_version=active.version if active else None,
+            candidate_version=candidate.version if candidate else None,
             indexed_version=state.indexed_snapshot_version if state else None,
             indexed_backend_version=state.backend_version if state else None,
             indexed_at=state.indexed_at.isoformat() if state else None,
@@ -260,36 +333,35 @@ class PostgresPgvectorKnowledgeBackend:
             ),
         )
 
-    async def index_active_profile(
-        self, db: AsyncSession, owner_id: str
-    ) -> tuple[ProfileIndexStatusResponse, list[ProfileIndexChunk]]:
-        active = await get_active_snapshot(db, owner_id)
-        if active is None:
-            raise ValueError("Publish a profile before indexing.")
-
+    async def index_snapshot(
+        self, db: AsyncSession, snapshot: PublishedProfileSnapshot
+    ) -> list[ProfileIndexChunk]:
+        owner_id = snapshot.owner_id
         state = await self._state(db, owner_id)
         if (
             state
-            and state.indexed_snapshot_version == active.version
+            and state.indexed_snapshot_version == snapshot.version
             and state.backend_version == self.version
         ):
             result = await db.execute(
                 select(ProfileIndexChunk)
                 .where(
                     ProfileIndexChunk.owner_id == owner_id,
-                    ProfileIndexChunk.snapshot_version == active.version,
+                    ProfileIndexChunk.snapshot_version == snapshot.version,
                 )
                 .order_by(ProfileIndexChunk.source_type, ProfileIndexChunk.title)
             )
-            return await self.status(db, owner_id), list(result.scalars().all())
+            chunks = list(result.scalars().all())
+            if chunks:
+                return chunks
 
         await db.execute(delete(ProfileIndexChunk).where(ProfileIndexChunk.owner_id == owner_id))
         stored_chunks: list[ProfileIndexChunk] = []
-        for chunk in build_profile_chunks(active.snapshot):
-            embedding = embed_text(chunk.text)
+        for chunk in build_profile_chunks(snapshot.snapshot):
+            embedding = await self.embedding_provider.embed(chunk.text)
             stored = ProfileIndexChunk(
                 id=f"profile_chunk_{uuid.uuid4().hex}", owner_id=owner_id,
-                snapshot_version=active.version, source_type=chunk.source_type,
+                snapshot_version=snapshot.version, source_type=chunk.source_type,
                 source_id=chunk.source_id, title=chunk.title, quote=chunk.quote,
                 text=chunk.text, chunk_metadata=chunk.metadata, embedding=embedding,
             )
@@ -299,11 +371,11 @@ class PostgresPgvectorKnowledgeBackend:
         now = datetime.now(timezone.utc)
         if state is None:
             db.add(ProfileIndexState(
-                owner_id=owner_id, indexed_snapshot_version=active.version,
+                owner_id=owner_id, indexed_snapshot_version=snapshot.version,
                 backend_version=self.version, chunk_count=len(stored_chunks), indexed_at=now,
             ))
         else:
-            state.indexed_snapshot_version = active.version
+            state.indexed_snapshot_version = snapshot.version
             state.backend_version = self.version
             state.chunk_count = len(stored_chunks)
             state.indexed_at = now
@@ -318,8 +390,8 @@ class PostgresPgvectorKnowledgeBackend:
                     ),
                     {"embedding": _vector_literal(chunk.embedding), "chunk_id": chunk.id},
                 )
-        await db.commit()
-        return await self.status(db, owner_id), stored_chunks
+        await db.flush()
+        return stored_chunks
 
     async def retrieve(
         self, db: AsyncSession, owner_id: str, question: str, *, limit: int = 3
@@ -338,7 +410,7 @@ class PostgresPgvectorKnowledgeBackend:
         if indexed_snapshot is None:
             raise ValueError("The indexed published profile snapshot is unavailable.")
 
-        query_embedding = embed_text(question)
+        query_embedding = await self.embedding_provider.embed(question)
         if db.bind and db.bind.dialect.name == "postgresql":
             rows = await self._postgres_rows(
                 db, owner_id, state.indexed_snapshot_version, query_embedding, max(limit * 4, limit)

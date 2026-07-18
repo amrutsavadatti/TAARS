@@ -263,6 +263,115 @@ button:disabled {
   color: #991b1b;
 }
 
+.resume-import {
+  background: #fff;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+  overflow: hidden;
+  padding: 18px;
+}
+
+.resume-import-header {
+  align-items: center;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.resume-import-copy {
+  min-width: 0;
+}
+
+.resume-import h2,
+.resume-import p {
+  margin-bottom: 4px;
+}
+
+.resume-upload-button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-weight: 700;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 13px;
+  white-space: nowrap;
+}
+
+.resume-upload-button svg {
+  height: 18px;
+  width: 18px;
+}
+
+.resume-upload-button input {
+  display: none;
+}
+
+.resume-upload-button.loading {
+  cursor: wait;
+}
+
+.resume-spinner {
+  animation: resume-spin 850ms linear infinite;
+}
+
+.resume-import-progress {
+  align-items: center;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  color: #1e3a8a;
+  display: flex;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 14px;
+}
+
+.resume-import-progress > svg {
+  flex: 0 0 auto;
+  height: 22px;
+  width: 22px;
+}
+
+.resume-import-progress div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.resume-import-progress span {
+  color: #475569;
+  font-size: 13px;
+}
+
+.resume-import-result {
+  border-top: 1px solid #dbe3ee;
+  display: grid;
+  gap: 4px;
+  padding-top: 14px;
+}
+
+.resume-import-result span,
+.resume-import-result p {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0;
+}
+
+@keyframes resume-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .grid {
   display: grid;
   gap: 14px;
@@ -306,6 +415,10 @@ select {
 textarea {
   min-height: 86px;
   resize: vertical;
+}
+
+textarea.large {
+  min-height: 160px;
 }
 
 input:focus,
@@ -502,6 +615,32 @@ select:focus {
   font-size: 12px;
 }
 
+.version-list {
+  display: grid;
+  gap: 0;
+  margin-top: 16px;
+}
+
+.version-row {
+  align-items: center;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 14px 0;
+}
+
+.version-row div {
+  display: grid;
+  gap: 4px;
+}
+
+.version-row span {
+  color: #6b7280;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
 @media (max-width: 860px) {
   .dashboard-shell {
     display: block;
@@ -522,5 +661,14 @@ select:focus {
   .inline-options {
     align-items: stretch;
     display: grid;
+  }
+
+  .resume-import-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .resume-upload-button {
+    justify-content: center;
   }
 }

@@ -175,6 +175,7 @@ class ProfileDraft(Base):
     projects: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     skills: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     education: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    certifications: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     achievements: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     personal_topics: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -192,8 +193,10 @@ class PublishedProfileSnapshot(Base):
     owner_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    publication_status: Mapped[str] = mapped_column(String, nullable=False, default="candidate", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ProfileIndexState(Base):

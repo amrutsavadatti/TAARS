@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     # --- Ingestion ---
     max_upload_size_mb: int = 10
     allowed_file_types: str = "pdf,png,jpg,jpeg,txt,md,docx"
+    resume_import_max_chars: int = 60_000
+    resume_import_max_output_tokens: int = 8_000
 
     # --- Owner ---
     owner_name: str = "Amrut"

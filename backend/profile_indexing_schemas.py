@@ -19,6 +19,7 @@ class ProfileIndexChunkResponse(BaseModel):
 class ProfileIndexStatusResponse(BaseModel):
     owner_id: str
     published_version: int | None
+    candidate_version: int | None
     indexed_version: int | None
     indexed_backend_version: str | None
     indexed_at: str | None

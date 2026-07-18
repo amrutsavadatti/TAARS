@@ -31,6 +31,7 @@ async def _save_and_publish_profile(client: AsyncClient, headers: dict[str, str]
         "projects": [
             {
                 "name": "Career assistant",
+                "summary": "Built a canonical profile workflow and retrieval contract for evidenced career answers.",
                 "problem": "Visitors needed evidence-backed answers about backend systems work.",
                 "contribution": "Built a canonical profile workflow and retrieval contract.",
                 "outcome": project_outcome,
@@ -43,6 +44,7 @@ async def _save_and_publish_profile(client: AsyncClient, headers: dict[str, str]
             },
             {
                 "name": "Private launch plan",
+                "summary": "Prepared confidential launch sequencing and rollout documentation.",
                 "problem": "Internal launch sequencing needed documentation.",
                 "contribution": "Prepared confidential rollout notes.",
                 "outcome": "Kept private launch details out of public answers.",
@@ -91,6 +93,7 @@ async def _save_and_publish_profile(client: AsyncClient, headers: dict[str, str]
 async def test_published_profile_can_be_indexed_and_queried_with_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'profiles.db'}")
     monkeypatch.setenv("OWNER_NAME", "Test Owner")
+    monkeypatch.setenv("LLM_API_KEY", "")
     _fresh_backend_modules()
 
     database = importlib.import_module("backend.database")
@@ -109,15 +112,17 @@ async def test_published_profile_can_be_indexed_and_queried_with_evidence(tmp_pa
 
         status_before = await client.get("/api/v1/profile/index-status", headers=headers)
         assert status_before.status_code == 200
-        assert status_before.json()["published_version"] == 1
+        assert status_before.json()["published_version"] is None
+        assert status_before.json()["candidate_version"] == 1
         assert status_before.json()["indexed_version"] is None
 
         indexed = await client.post("/api/v1/profile/index", headers=headers)
         assert indexed.status_code == 200
         indexed_body = indexed.json()
         assert indexed_body["published_version"] == 1
+        assert indexed_body["candidate_version"] is None
         assert indexed_body["indexed_version"] == 1
-        assert indexed_body["indexed_backend_version"] == "profile-hash-384-v2"
+        assert indexed_body["indexed_backend_version"] == "profile-hash-384-v3"
         assert indexed_body["chunk_count"] >= 3
         assert {chunk["source_id"] for chunk in indexed_body["chunks"]} >= {
             published_v1["snapshot"]["experiences"][0]["id"],
@@ -164,19 +169,25 @@ async def test_published_profile_can_be_indexed_and_queried_with_evidence(tmp_pa
         assert unsupported.json()["evidence"] == []
         assert "don't have enough information" in unsupported.json()["answer"].lower()
 
-        await client.put(
+        changed_draft = {
+            key: saved[key]
+            for key in (
+                "owner_name", "experiences", "projects", "skills", "education",
+                "achievements", "personal_topics",
+            )
+        }
+        changed_draft["projects"] = [
+            {
+                **saved["projects"][0],
+                "outcome": "Changed draft-only outcome that should not be indexed yet.",
+            }
+        ]
+        draft_update = await client.put(
             "/api/v1/profile/draft",
-            json={
-                **saved,
-                "projects": [
-                    {
-                        **saved["projects"][0],
-                        "outcome": "Changed draft-only outcome that should not be indexed yet.",
-                    }
-                ],
-            },
+            json=changed_draft,
             headers=headers,
         )
+        assert draft_update.status_code == 200
         draft_only_answer = await client.post(
             "/api/v1/ask",
             json={"question": "What did the career assistant project accomplish?"},
@@ -188,9 +199,24 @@ async def test_published_profile_can_be_indexed_and_queried_with_evidence(tmp_pa
 
         await client.post("/api/v1/profile/publish", headers=headers)
         stale_status = await client.get("/api/v1/profile/index-status", headers=headers)
-        assert stale_status.json()["published_version"] == 2
+        assert stale_status.json()["published_version"] == 1
+        assert stale_status.json()["candidate_version"] == 2
         assert stale_status.json()["indexed_version"] == 1
+        assert stale_status.json()["is_stale"] is False
 
         reindexed = await client.post("/api/v1/profile/index", headers=headers)
         assert reindexed.status_code == 200
+        assert reindexed.json()["published_version"] == 2
+        assert reindexed.json()["candidate_version"] is None
         assert reindexed.json()["indexed_version"] == 2
+
+        rollback = await client.post("/api/v1/profile/versions/1/activate", headers=headers)
+        assert rollback.status_code == 200
+        assert rollback.json()["published_version"] == 1
+        assert rollback.json()["indexed_version"] == 1
+
+        versions = await client.get("/api/v1/profile/versions", headers=headers)
+        assert [(item["version"], item["publication_status"]) for item in versions.json()] == [
+            (2, "superseded"),
+            (1, "active"),
+        ]

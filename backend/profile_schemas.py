@@ -28,6 +28,7 @@ class ProjectInput(BaseModel):
 
     id: str | None = None
     name: str = ""
+    summary: str = ""
     problem: str = ""
     contribution: str = ""
     outcome: str = ""
@@ -87,6 +88,23 @@ class AchievementInput(BaseModel):
     display_order: int = 0
 
 
+class CertificationInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    name: str = ""
+    issuer: str = ""
+    issue_month: int | None = Field(default=None, ge=1, le=12)
+    issue_year: int | None = Field(default=None, ge=1900, le=2500)
+    expiration_month: int | None = Field(default=None, ge=1, le=12)
+    expiration_year: int | None = Field(default=None, ge=1900, le=2500)
+    credential_id: str = ""
+    credential_url: str = ""
+    summary: str = ""
+    evidence: str = ""
+    display_order: int = 0
+
+
 class PersonalTopicInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -105,6 +123,7 @@ class ProfileDraftInput(BaseModel):
     projects: list[ProjectInput] = Field(default_factory=list)
     skills: list[SkillInput] = Field(default_factory=list)
     education: list[EducationInput] = Field(default_factory=list)
+    certifications: list[CertificationInput] = Field(default_factory=list)
     achievements: list[AchievementInput] = Field(default_factory=list)
     personal_topics: list[PersonalTopicInput] = Field(default_factory=list)
 
@@ -116,10 +135,12 @@ class ProfileDraftResponse(BaseModel):
     projects: list[dict]
     skills: list[dict]
     education: list[dict]
+    certifications: list[dict]
     achievements: list[dict]
     personal_topics: list[dict]
     updated_at: str | None = None
     published_version: int | None = None
+    candidate_version: int | None = None
     has_published_snapshot: bool
 
 
@@ -137,4 +158,32 @@ class PublishedProfileResponse(BaseModel):
     owner_id: str
     version: int
     published_at: str
+    activated_at: str | None
+    publication_status: Literal["candidate", "active", "superseded"]
+    is_active: bool
     snapshot: dict
+
+
+class ProfileVersionResponse(BaseModel):
+    version: int
+    published_at: str
+    activated_at: str | None
+    publication_status: Literal["candidate", "active", "superseded"]
+    is_active: bool
+
+
+class ResumeProfileExtraction(BaseModel):
+    owner_name: str = ""
+    experiences: list[ExperienceInput] = Field(default_factory=list)
+    projects: list[ProjectInput] = Field(default_factory=list)
+    skills: list[SkillInput] = Field(default_factory=list)
+    education: list[EducationInput] = Field(default_factory=list)
+    certifications: list[CertificationInput] = Field(default_factory=list)
+    achievements: list[AchievementInput] = Field(default_factory=list)
+
+
+class ResumeImportResponse(BaseModel):
+    filename: str
+    profile: ResumeProfileExtraction
+    generated_fields: list[str]
+    warnings: list[str]
